@@ -29,7 +29,7 @@ import {
     DialogTitle,
     DialogFooter,
 } from "@/components/ui/dialog";
-import { supabase } from "@/lib/supabase";
+import { apiFetch } from "@/lib/api";
 
 type Category = {
     id: number;
@@ -66,38 +66,15 @@ export default function SettingsPage() {
             setLoading(true);
             setError(null);
 
-            // Fetch categories and report counts in parallel
-            const [catsRes, reportsRes] = await Promise.all([
-                supabase.from("categories").select("id, name, category_group, is_active").eq("is_active", true).order("name"),
-                supabase.from("reports").select("category_id"),
-            ]);
+            const data = await apiFetch<{
+                categories: Category[];
+                admin: { email: string; full_name: string } | null;
+            }>("/api/categories?include=settings");
 
-            if (catsRes.error) throw catsRes.error;
+            setCategories(data.categories);
 
-            // Count reports per category
-            const countMap = new Map<number, number>();
-            for (const r of reportsRes.data || []) {
-                if (r.category_id) countMap.set(r.category_id, (countMap.get(r.category_id) || 0) + 1);
-            }
-
-            setCategories(
-                (catsRes.data || []).map((c) => ({
-                    id: c.id,
-                    name: c.name,
-                    group: c.category_group,
-                    reportCount: countMap.get(c.id) || 0,
-                }))
-            );
-
-            // Load admin email for notifications
-            const { data: adminData } = await supabase
-                .from("users")
-                .select("email, full_name")
-                .eq("role", "admin")
-                .limit(1)
-                .single();
-            if (adminData) {
-                setNotifEmail(adminData.email);
+            if (data.admin) {
+                setNotifEmail(data.admin.email);
                 setOrgName("CivicSight AI");
                 setMapRegion("Greater Toronto Area");
             }
@@ -114,19 +91,10 @@ export default function SettingsPage() {
     const handleAddCategory = async () => {
         if (!newCatName.trim() || !newCatGroup.trim()) return;
         try {
-            const { data, error: insertErr } = await supabase
-                .from("categories")
-                .insert({
-                    name: newCatName.trim(),
-                    category_group: newCatGroup.trim(),
-                    example_issues: "",
-                    min_response_days: 3,
-                    max_response_days: 14,
-                    is_active: true,
-                })
-                .select()
-                .single();
-            if (insertErr) throw insertErr;
+            const data = await apiFetch<{ id: number; name: string; category_group: string }>("/api/categories", {
+                method: "POST",
+                body: JSON.stringify({ name: newCatName.trim(), category_group: newCatGroup.trim() }),
+            });
             setCategories((prev) => [...prev, { id: data.id, name: data.name, group: data.category_group, reportCount: 0 }]);
             setNewCatName("");
             setNewCatGroup("");
@@ -138,8 +106,10 @@ export default function SettingsPage() {
 
     const handleDeleteCategory = async (id: number) => {
         try {
-            const { error: delErr } = await supabase.from("categories").update({ is_active: false }).eq("id", id);
-            if (delErr) throw delErr;
+            await apiFetch("/api/categories", {
+                method: "DELETE",
+                body: JSON.stringify({ id }),
+            });
             setCategories((prev) => prev.filter((c) => c.id !== id));
         } catch (err) {
             console.error("Failed to delete category:", err);
@@ -149,11 +119,10 @@ export default function SettingsPage() {
     const handleEditCategory = async () => {
         if (!editCategory) return;
         try {
-            const { error: upErr } = await supabase
-                .from("categories")
-                .update({ name: editCategory.name, category_group: editCategory.group })
-                .eq("id", editCategory.id);
-            if (upErr) throw upErr;
+            await apiFetch("/api/categories", {
+                method: "PATCH",
+                body: JSON.stringify({ id: editCategory.id, name: editCategory.name, category_group: editCategory.group }),
+            });
             setCategories((prev) => prev.map((c) => (c.id === editCategory.id ? editCategory : c)));
             setEditCategory(null);
         } catch (err) {

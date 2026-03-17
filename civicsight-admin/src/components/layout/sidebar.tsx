@@ -24,6 +24,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useState, useEffect, useCallback } from "react";
 import { getCurrentAdmin, adminLogout } from "@/lib/queries";
+import { apiFetch } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 
 interface AdminInfo {
@@ -40,11 +41,8 @@ export function Sidebar() {
 
     const fetchPendingCount = useCallback(async () => {
         try {
-            const { count, error } = await supabase
-                .from("reports")
-                .select("*", { count: "exact", head: true })
-                .not("status", "in", '("resolved","completed")');
-            if (!error && count !== null) setPendingReportCount(count);
+            const data = await apiFetch<{ count: number }>("/api/reports?count=pending");
+            setPendingReportCount(data.count);
         } catch {
             // silent
         }
