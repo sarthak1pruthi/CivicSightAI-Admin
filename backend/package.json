@@ -1,0 +1,17 @@
+{
+  "name": "civicsight-admin-backend",
+  "version": "1.0.0",
+  "description": "CivicSightAI Admin Backend API",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.99.2"
+  }
+}
