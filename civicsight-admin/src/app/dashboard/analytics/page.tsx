@@ -116,7 +116,7 @@ export default function AnalyticsPage() {
         const counts: Record<string, number> = {};
         for (const r of reports) counts[r.status] = (counts[r.status] || 0) + 1;
         const total = reports.length || 1;
-        const colorMap: Record<string, string> = { completed: "#22c55e", resolved: "#22c55e", in_progress: "#3b82f6", pending: "#f59e0b", closed: "#6b7280", open: "#60a5fa", assigned: "#8b5cf6", rejected: "#ef4444" };
+        const colorMap: Record<string, string> = { resolved: "#22c55e", in_progress: "#3b82f6", pending: "#f59e0b", closed: "#6b7280", open: "#60a5fa", assigned: "#8b5cf6", rejected: "#ef4444" };
         return Object.entries(counts).map(([name, count]) => ({
             name: name.replace("_", " "),
             value: Math.round((count / total) * 100),
@@ -131,7 +131,7 @@ export default function AnalyticsPage() {
             const catName = r.category_id ? (catsMap.get(r.category_id) || "Other") : (r.ai_category_name || "Other");
             const c = catCounts[catName] || { total: 0, resolved: 0 };
             c.total++;
-            if (r.status === "completed" || r.status === "resolved") c.resolved++;
+            if (r.status === "resolved") c.resolved++;
             catCounts[catName] = c;
         }
         return Object.entries(catCounts)
@@ -151,7 +151,7 @@ export default function AnalyticsPage() {
             const area = loc?.city || loc?.neighbourhood || "Unknown";
             const a = areas[area] || { reports: 0, resolved: 0, totalHours: 0, resolvedCount: 0 };
             a.reports++;
-            if (r.status === "completed" || r.status === "resolved") {
+            if (r.status === "resolved") {
                 a.resolved++;
                 if (r.resolved_at) {
                     a.totalHours += (new Date(r.resolved_at).getTime() - new Date(r.reported_at).getTime()) / (1000 * 60 * 60);

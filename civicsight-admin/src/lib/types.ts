@@ -9,11 +9,11 @@ export type ReportStatus =
   | "open"
   | "assigned"
   | "in_progress"
-  | "completed"
+  | "resolved"
   | "closed"
   | "rejected";
 
-export type AssignmentStatus = "assigned" | "in_progress" | "completed" | "rejected";
+export type AssignmentStatus = "assigned" | "in_progress" | "resolved" | "rejected";
 export type AssignmentPriority = "low" | "normal" | "high" | "critical";
 
 export interface DbUser {

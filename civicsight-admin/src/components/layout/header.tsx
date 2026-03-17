@@ -14,7 +14,7 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useState, useRef, useEffect, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
+import { apiFetch } from "@/lib/api";
 
 const pageTitles: Record<string, { title: string; description: string }> = {
     "/dashboard": {
@@ -103,37 +103,15 @@ export function Header() {
         try {
             const q = query.toLowerCase();
 
-            // Search pages
+            // Search pages locally
             const matchedPages = pageSearchItems.filter((p) => p.label.toLowerCase().includes(q));
 
-            // Search reports and users in parallel
-            const [reportsRes, usersRes] = await Promise.all([
-                supabase
-                    .from("reports")
-                    .select("id, report_number, description, status")
-                    .or(`description.ilike.%${query}%,status.ilike.%${query}%`)
-                    .order("reported_at", { ascending: false })
-                    .limit(5),
-                supabase
-                    .from("users")
-                    .select("uid, full_name, email")
-                    .or(`full_name.ilike.%${query}%,email.ilike.%${query}%`)
-                    .limit(5),
-            ]);
+            // Search reports and users via backend
+            const apiResults = await apiFetch<{ type: string; label: string; href: string }[]>(
+                `/api/search?q=${encodeURIComponent(query)}`
+            );
 
-            const reportItems = (reportsRes.data || []).map((r) => ({
-                type: "report",
-                label: `RPT-${String(r.report_number).padStart(4, "0")} — ${(r.description || "").slice(0, 60)}`,
-                href: "/dashboard/reports",
-            }));
-
-            const userItems = (usersRes.data || []).map((u) => ({
-                type: "user",
-                label: `${u.full_name || "Unnamed"} — ${u.email}`,
-                href: "/dashboard/users",
-            }));
-
-            setSearchResults([...reportItems, ...userItems, ...matchedPages].slice(0, 10));
+            setSearchResults([...apiResults, ...matchedPages].slice(0, 10));
         } catch {
             setSearchResults([]);
         } finally {
@@ -149,34 +127,37 @@ export function Header() {
 
     useEffect(() => {
         async function loadNotifications() {
-            const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-            const { data } = await supabase
-                .from("reports")
-                .select("id, report_number, status, ai_severity, reported_at, resolved_at")
-                .gte("reported_at", cutoff)
-                .order("reported_at", { ascending: false })
-                .limit(30);
+            try {
+                const data = await apiFetch<Array<{
+                    id: string;
+                    report_number: number;
+                    status: string;
+                    ai_severity: number | null;
+                    reported_at: string;
+                    resolved_at: string | null;
+                }>>("/api/dashboard?type=notifications");
 
-            if (!data) return;
+                const notifs: NotifType[] = [];
+                for (const r of data) {
+                    const rpt = `RPT-${String(r.report_number ?? 0).padStart(4, "0")}`;
+                    const isResolved = ["resolved", "closed"].includes(r.status);
+                    const resolvedRecently = r.resolved_at && Date.now() - new Date(r.resolved_at).getTime() < 3 * 60 * 60 * 1000;
 
-            const notifs: NotifType[] = [];
-            for (const r of data) {
-                const rpt = `RPT-${String(r.report_number ?? 0).padStart(4, "0")}`;
-                const isResolved = ["completed", "resolved", "closed"].includes(r.status);
-                const resolvedRecently = r.resolved_at && Date.now() - new Date(r.resolved_at).getTime() < 3 * 60 * 60 * 1000;
+                    if ((r.ai_severity ?? 0) >= 4 && !isResolved) {
+                        notifs.push({ id: `h-${r.id}`, badgeVariant: "destructive", badgeLabel: "High", time: timeAgo(r.reported_at), message: `High-severity ${rpt} needs attention`, read: false });
+                    } else if ((r.status === "pending" || r.status === "open") && !isResolved) {
+                        notifs.push({ id: `p-${r.id}`, badgeVariant: "secondary", badgeLabel: "Pending", time: timeAgo(r.reported_at), message: `${rpt} is awaiting assignment`, read: false });
+                    } else if (isResolved && resolvedRecently) {
+                        notifs.push({ id: `r-${r.id}`, badgeVariant: "default", badgeLabel: "Resolved", badgeClass: "bg-success text-white", time: timeAgo(r.resolved_at!), message: `${rpt} marked as resolved`, read: false });
+                    }
 
-                if ((r.ai_severity ?? 0) >= 4 && !isResolved) {
-                    notifs.push({ id: `h-${r.id}`, badgeVariant: "destructive", badgeLabel: "High", time: timeAgo(r.reported_at), message: `High-severity ${rpt} needs attention`, read: false });
-                } else if ((r.status === "pending" || r.status === "open") && !isResolved) {
-                    notifs.push({ id: `p-${r.id}`, badgeVariant: "secondary", badgeLabel: "Pending", time: timeAgo(r.reported_at), message: `${rpt} is awaiting assignment`, read: false });
-                } else if (isResolved && resolvedRecently) {
-                    notifs.push({ id: `r-${r.id}`, badgeVariant: "default", badgeLabel: "Resolved", badgeClass: "bg-success text-white", time: timeAgo(r.resolved_at!), message: `${rpt} marked as resolved`, read: false });
+                    if (notifs.length >= 10) break;
                 }
 
-                if (notifs.length >= 10) break;
+                setNotifications(notifs);
+            } catch {
+                // silent
             }
-
-            setNotifications(notifs);
         }
         loadNotifications();
     }, []);

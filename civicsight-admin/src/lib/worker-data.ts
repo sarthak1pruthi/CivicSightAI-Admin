@@ -1,4 +1,4 @@
-export type WorkerTaskStatus = "assigned" | "in_progress" | "completed";
+export type WorkerTaskStatus = "assigned" | "in_progress" | "resolved";
 export type WorkerTaskPriority = "critical" | "high" | "medium" | "low";
 
 export type WorkerTask = {
@@ -75,7 +75,7 @@ export const workerTasks: WorkerTask[] = [
     title: "Damaged sidewalk near Lincoln School",
     category: "Sidewalk Safety",
     priority: "medium",
-    status: "completed",
+    status: "resolved",
     location: "Lincoln School, Maple Drive",
     reportedAt: "2026-03-05T14:20:00Z",
     dueDate: "2026-03-07T17:00:00Z",
@@ -93,5 +93,5 @@ export const workerTasks: WorkerTask[] = [
 export const statusLabel: Record<WorkerTaskStatus, string> = {
   assigned: "Assigned",
   in_progress: "In Progress",
-  completed: "Completed",
+  resolved: "Resolved",
 };

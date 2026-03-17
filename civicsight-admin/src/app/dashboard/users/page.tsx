@@ -46,7 +46,7 @@ import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useRouter } from "next/navigation";
 import { fetchCitizens, fetchWorkers } from "@/lib/queries";
-import { supabase } from "@/lib/supabase";
+import { apiFetch } from "@/lib/api";
 import type { DbUser, WorkerWithProfile } from "@/lib/types";
 
 type CitizenWithProfile = DbUser & {
@@ -102,7 +102,10 @@ export default function UsersPage() {
     const toggleUserStatus = async (uid: string, currentStatus: string) => {
         const newStatus = currentStatus === "active" ? "banned" : "active";
         try {
-            await supabase.from("users").update({ status: newStatus, updated_at: new Date().toISOString() }).eq("uid", uid);
+            await apiFetch("/api/users", {
+                method: "PATCH",
+                body: JSON.stringify({ uid, status: newStatus }),
+            });
             setCitizens((prev) => prev.map((u) => u.uid === uid ? { ...u, status: newStatus } : u));
             setWorkers((prev) => prev.map((u) => u.uid === uid ? { ...u, status: newStatus } : u));
             if (selectedUser?.uid === uid) {
@@ -302,9 +305,9 @@ export default function UsersPage() {
                                         </div>
                                         <div className="flex items-center justify-between text-xs">
                                             <span className="text-muted-foreground flex items-center gap-1.5">
-                                                <FileText className="w-3 h-3" /> Completed
+                                                <FileText className="w-3 h-3" /> Resolved
                                             </span>
-                                            <span className="font-medium">{worker.worker_profile?.total_completed || 0} tasks</span>
+                                            <span className="font-medium">{worker.worker_profile?.total_completed || 0} resolved</span>
                                         </div>
                                         <div className="flex items-center justify-between text-xs">
                                             <span className="text-muted-foreground flex items-center gap-1.5">
@@ -340,7 +343,7 @@ export default function UsersPage() {
                                         <DialogTitle>{selectedUser.full_name || "Unnamed"}</DialogTitle>
                                         <div className="flex items-center gap-2 mt-1">
                                             <Badge variant="outline" className={`text-[10px] capitalize ${roleColors[selectedUser.role]}`}>
-                                                {selectedUser.role === "citizen" ? "ðŸ‘¤" : "ðŸ”§"} {selectedUser.role}
+                                                {selectedUser.role}
                                             </Badge>
                                             <Badge variant="outline" className={`text-[10px] capitalize ${statusColors[selectedUser.status] || ""}`}>
                                                 {selectedUser.status}
@@ -374,7 +377,7 @@ export default function UsersPage() {
                                     <Card className="border-border/50">
                                         <CardContent className="p-3 text-center">
                                             <p className="text-[10px] text-muted-foreground uppercase">
-                                                {selectedUser.role === "worker" ? "Completed" : "Reports"}
+                                                {selectedUser.role === "worker" ? "Resolved" : "Reports"}
                                             </p>
                                             <p className="text-xl font-bold text-primary mt-1">
                                                 {selectedUser.role === "worker"
@@ -408,7 +411,7 @@ export default function UsersPage() {
                                         variant="outline"
                                         size="sm"
                                         className="text-xs flex-1"
-                                        onClick={() => { setSelectedUser(null); router.push("/dashboard/reports"); }}
+                                        onClick={() => { setSelectedUser(null); router.push(`/dashboard/reports?worker=${selectedUser.uid}`); }}
                                     >
                                         <FileText className="w-3.5 h-3.5 mr-1.5" />
                                         View Reports
