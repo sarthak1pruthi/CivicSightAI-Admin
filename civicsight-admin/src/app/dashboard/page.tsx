@@ -38,8 +38,8 @@ import {
     Cell,
     Sector,
 } from "recharts";
-import { fetchDashboardStats, fetchReports, fetchCategories } from "@/lib/queries";
-import type { ReportWithDetails, DbCategory } from "@/lib/types";
+import { fetchDashboardStats, fetchReports } from "@/lib/queries";
+import type { ReportWithDetails } from "@/lib/types";
 
 const PIE_COLORS = [
     "oklch(0.7 0.16 55)",
@@ -56,7 +56,6 @@ const statusColors: Record<string, string> = {
     open: "bg-info/10 text-info border-info/20",
     assigned: "bg-blue-500/10 text-blue-500 border-blue-500/20",
     in_progress: "bg-info/10 text-info border-info/20",
-    completed: "bg-success/10 text-success border-success/20",
     resolved: "bg-success/10 text-success border-success/20",
     closed: "bg-muted text-muted-foreground border-border",
     rejected: "bg-destructive/10 text-destructive border-destructive/20",
@@ -98,25 +97,22 @@ export default function DashboardPage() {
         totalWorkers: number;
         resolvedToday: number;
         statusCounts: Record<string, number>;
-        categoryCounts: Record<number, number>;
+        categoryCounts: Record<string, number>;
         last7Days: { date: string; count: number }[];
         avgResolutionHours: number;
     } | null>(null);
     const [recentReports, setRecentReports] = useState<ReportWithDetails[]>([]);
-    const [categories, setCategories] = useState<DbCategory[]>([]);
 
     const loadData = useCallback(async () => {
         try {
             setLoading(true);
             setError(null);
-            const [statsData, reportsData, catsData] = await Promise.all([
+            const [statsData, reportsData] = await Promise.all([
                 fetchDashboardStats(),
                 fetchReports(),
-                fetchCategories(),
             ]);
             setStats(statsData);
             setRecentReports(reportsData.slice(0, 5));
-            setCategories(catsData);
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to load dashboard data");
         } finally {
@@ -159,12 +155,11 @@ export default function DashboardPage() {
         return { name: dayName, reports: d.count, resolved: 0 };
     });
 
-    // Build pie data from category counts
-    const catsMap = new Map(categories.map((c) => [c.id, c.name]));
+    // Build pie data from category counts (already keyed by name from backend)
     const totalCatReports = Object.values(stats.categoryCounts).reduce((a, b) => a + b, 0) || 1;
     const categoryData = Object.entries(stats.categoryCounts)
-        .map(([catId, count], i) => ({
-            name: catsMap.get(Number(catId)) || `Category ${catId}`,
+        .map(([catName, count], i) => ({
+            name: catName,
             value: Math.round((count / totalCatReports) * 100),
             color: PIE_COLORS[i % PIE_COLORS.length],
         }))

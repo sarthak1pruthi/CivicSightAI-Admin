@@ -53,6 +53,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
+import { useSearchParams } from "next/navigation";
 import {
     fetchReports,
     fetchWorkers,
@@ -74,7 +75,6 @@ const statusColors: Record<string, string> = {
     open: "bg-info/10 text-info border-info/20",
     assigned: "bg-blue-500/10 text-blue-500 border-blue-500/20",
     in_progress: "bg-info/10 text-info border-info/20",
-    completed: "bg-success/10 text-success border-success/20",
     resolved: "bg-success/10 text-success border-success/20",
     closed: "bg-muted text-muted-foreground border-border",
     rejected: "bg-destructive/10 text-destructive border-destructive/20",
@@ -118,6 +118,8 @@ function timeAgo(dateStr: string): string {
 const ITEMS_PER_PAGE = 6;
 
 export default function ReportsPage() {
+    const searchParams = useSearchParams();
+    const workerFilter = searchParams.get("worker");
     const [reports, setReports] = useState<ReportWithDetails[]>([]);
     const [workers, setWorkers] = useState<WorkerWithProfile[]>([]);
     const [categories, setCategories] = useState<DbCategory[]>([]);
@@ -164,6 +166,7 @@ export default function ReportsPage() {
 
     // Filter logic
     const filteredReports = reports.filter((r) => {
+        if (workerFilter && r.assigned_worker_id !== workerFilter) return false;
         if (statusFilter !== "all" && r.status !== statusFilter) return false;
         if (categoryFilter !== "all" && r.category?.category_group !== categoryFilter) return false;
         if (severityFilter !== "all" && getSeverityLabel(r.ai_severity).toLowerCase() !== severityFilter) return false;
@@ -197,7 +200,7 @@ export default function ReportsPage() {
         open: reports.filter((r) => r.status === "open").length,
         assigned: reports.filter((r) => r.status === "assigned").length,
         in_progress: reports.filter((r) => r.status === "in_progress").length,
-        completed: reports.filter((r) => r.status === "completed").length,
+        resolved: reports.filter((r) => r.status === "resolved").length,
         closed: reports.filter((r) => r.status === "closed").length,
     };
 
@@ -225,22 +228,49 @@ export default function ReportsPage() {
         setSelectedReport(null);
     };
 
-    // Export
-    const handleExport = () => {
-        const csv = [
-            "ID,Description,Category,Severity,Priority,Status,Citizen,Reported",
-            ...filteredReports.map((r) =>
-                `RPT-${r.report_number},"${r.description.slice(0, 100)}",${r.category?.name || "N/A"},${getSeverityLabel(r.ai_severity)},${getPriorityFromSeverity(r.ai_severity)},${r.status},${r.citizen?.full_name || "Unknown"},${r.reported_at}`
-            ),
-        ].join("\n");
+    // Export as PDF
+    const handleExport = async () => {
+        const { default: jsPDF } = await import("jspdf");
+        const autoTable = (await import("jspdf-autotable")).default;
 
-        const blob = new Blob([csv], { type: "text/csv" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `civicsight-reports-${new Date().toISOString().slice(0, 10)}.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
+        const doc = new jsPDF({ orientation: "landscape" });
+
+        // Title
+        doc.setFontSize(18);
+        doc.setTextColor(40, 40, 40);
+        doc.text("CivicSight AI - Reports", 14, 20);
+
+        // Subtitle
+        doc.setFontSize(10);
+        doc.setTextColor(120, 120, 120);
+        doc.text(`Generated on ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}  |  ${reports.length} total reports`, 14, 28);
+
+        // Table
+        const tableData = reports.map((r) => [
+            `RPT-${r.report_number}`,
+            r.description.length > 60 ? r.description.slice(0, 60) + "..." : r.description,
+            r.category?.name || "N/A",
+            getSeverityLabel(r.ai_severity),
+            r.status.replace("_", " "),
+            r.citizen?.full_name || "Unknown",
+            new Date(r.reported_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }),
+        ]);
+
+        autoTable(doc, {
+            startY: 34,
+            head: [["ID", "Description", "Category", "Severity", "Status", "Citizen", "Reported"]],
+            body: tableData,
+            styles: { fontSize: 8, cellPadding: 3 },
+            headStyles: { fillColor: [30, 30, 40], textColor: [255, 255, 255], fontStyle: "bold" },
+            alternateRowStyles: { fillColor: [245, 245, 250] },
+            columnStyles: {
+                0: { cellWidth: 25 },
+                1: { cellWidth: 80 },
+                4: { cellWidth: 25 },
+            },
+        });
+
+        doc.save(`civicsight-reports-${new Date().toISOString().slice(0, 10)}.pdf`);
     };
 
     // Assign worker handler
@@ -521,10 +551,10 @@ export default function ReportsPage() {
                                                 <DropdownMenuItem
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        handleUpdateStatus(report.id, "completed");
+                                                        handleUpdateStatus(report.id, "resolved");
                                                     }}
                                                 >
-                                                    Mark as Completed
+                                                    Mark as Resolved
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem
                                                     onClick={(e) => {
@@ -905,7 +935,7 @@ export default function ReportsPage() {
                                     <div className="flex-1">
                                         <p className="text-sm font-medium group-hover:text-primary transition-colors">{worker.full_name || "Unnamed"}</p>
                                         <p className="text-[11px] text-muted-foreground">
-                                            {worker.worker_profile?.service_area || "No area"} · {worker.worker_profile?.total_completed || 0} completed
+                                            {worker.worker_profile?.service_area || "No area"} · {worker.worker_profile?.total_completed || 0} resolved
                                         </p>
                                     </div>
                                     {worker.worker_profile && (
