@@ -18,6 +18,8 @@ import {
     Loader2,
     AlertTriangle,
     ImageIcon,
+    XCircle,
+    MessageSquare,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -53,6 +55,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
+import { Label } from "@/components/ui/label";
 import { useSearchParams } from "next/navigation";
 import {
     fetchReports,
@@ -94,6 +97,63 @@ function getSeverityLabel(severity: number | null): string {
     if (severity >= 4) return "High";
     if (severity >= 3) return "Medium";
     return "Low";
+}
+
+// Category icon mapping based on category name / group
+function getCategoryIcon(categoryName?: string, categoryGroup?: string): string {
+    const name = (categoryName || "").toLowerCase();
+    const group = (categoryGroup || "").toLowerCase();
+
+    // Specific category icons
+    const categoryIcons: Record<string, string> = {
+        pothole: "🕳️",
+        "road crack & surface damage": "🛣️",
+        "sidewalk & curb damage": "🚶",
+        "faded road markings": "🚧",
+        "damaged road sign": "🪧",
+        "damaged traffic signal": "🚦",
+        "water leak": "💧",
+        "flooding & standing water": "🌊",
+        "blocked catch basin": "🔲",
+        "manhole issue": "⚠️",
+        "overflowing litter bin": "🗑️",
+        "illegal dumping": "🚮",
+        graffiti: "🎨",
+        "debris on road": "⚠️",
+        "fallen tree or branch": "🌳",
+        "dead or hazardous tree": "🪵",
+        "tree root damage": "🌿",
+        "damaged playground equipment": "🛝",
+        "damaged park amenity": "🏞️",
+        "damaged bus shelter": "🚏",
+        "dead animal": "🐾",
+        "snow or ice on road": "❄️",
+        "snow or ice on sidewalk": "🧊",
+        "property standards violation": "🏚️",
+        "unsafe construction site": "🏗️",
+        "abandoned vehicle": "🚗",
+        "electrical hazard": "⚡",
+        "damaged utility box": "📦",
+        "accessibility barrier": "♿",
+    };
+
+    if (categoryIcons[name]) return categoryIcons[name];
+
+    // Fallback to group icons
+    const groupIcons: Record<string, string> = {
+        "roads & transportation": "🛣️",
+        "water & drainage": "💧",
+        "waste & cleanliness": "🗑️",
+        "trees & green spaces": "🌳",
+        "parks & public spaces": "🏞️",
+        "winter maintenance": "❄️",
+        "property & safety": "🏠",
+        "utilities & infrastructure": "⚡",
+    };
+
+    if (groupIcons[group]) return groupIcons[group];
+
+    return "📋";
 }
 
 function getPriorityFromSeverity(severity: number | null): string {
@@ -139,6 +199,9 @@ export default function ReportsPage() {
     const [assignPriority, setAssignPriority] = useState<AssignmentPriority>("normal");
     const [assignNote, setAssignNote] = useState("");
     const [assigning, setAssigning] = useState(false);
+    const [rejectDialog, setRejectDialog] = useState<ReportWithDetails | null>(null);
+    const [rejectNote, setRejectNote] = useState("");
+    const [rejecting, setRejecting] = useState(false);
 
     const loadData = useCallback(async () => {
         try {
@@ -211,12 +274,13 @@ export default function ReportsPage() {
         in_progress: baseReports.filter((r) => r.status === "in_progress").length,
         resolved: baseReports.filter((r) => r.status === "resolved").length,
         closed: baseReports.filter((r) => r.status === "closed").length,
+        rejected: baseReports.filter((r) => r.status === "rejected").length,
     };
 
     // Update report status
-    const handleUpdateStatus = async (reportId: string, newStatus: ReportStatus) => {
+    const handleUpdateStatus = async (reportId: string, newStatus: ReportStatus, rejectionNote?: string) => {
         try {
-            await updateReportStatusDb(reportId, newStatus);
+            await updateReportStatusDb(reportId, newStatus, rejectionNote);
             setReports((prev) =>
                 prev.map((r) => (r.id === reportId ? { ...r, status: newStatus } : r))
             );
@@ -226,6 +290,21 @@ export default function ReportsPage() {
             }
         } catch (err) {
             console.error("Failed to update status:", err);
+        }
+    };
+
+    // Reject report with note
+    const handleRejectReport = async () => {
+        if (!rejectDialog || !rejectNote.trim()) return;
+        try {
+            setRejecting(true);
+            await handleUpdateStatus(rejectDialog.id, "rejected", rejectNote.trim());
+            setRejectDialog(null);
+            setRejectNote("");
+        } catch (err) {
+            console.error("Failed to reject report:", err);
+        } finally {
+            setRejecting(false);
         }
     };
 
@@ -539,15 +618,17 @@ export default function ReportsPage() {
                                                     <Eye className="w-3.5 h-3.5 mr-2" />
                                                     View Details
                                                 </DropdownMenuItem>
-                                                <DropdownMenuItem
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setAssignDialog(report);
-                                                    }}
-                                                >
-                                                    <UserPlus className="w-3.5 h-3.5 mr-2" />
-                                                    Assign Worker
-                                                </DropdownMenuItem>
+                                                {report.status !== "rejected" && (
+                                                    <DropdownMenuItem
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setAssignDialog(report);
+                                                        }}
+                                                    >
+                                                        <UserPlus className="w-3.5 h-3.5 mr-2" />
+                                                        Assign Worker
+                                                    </DropdownMenuItem>
+                                                )}
                                                 <DropdownMenuSeparator />
                                                 <DropdownMenuItem
                                                     onClick={(e) => {
@@ -572,8 +653,17 @@ export default function ReportsPage() {
                                                     }}
                                                 >
                                                     Mark as Closed
-                                                </DropdownMenuItem>
-                                            </DropdownMenuContent>
+                                                </DropdownMenuItem>                                                <DropdownMenuSeparator />
+                                                <DropdownMenuItem
+                                                    className="text-destructive focus:text-destructive"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setRejectDialog(report);
+                                                    }}
+                                                >
+                                                    <XCircle className="w-3.5 h-3.5 mr-2" />
+                                                    Reject Report
+                                                </DropdownMenuItem>                                            </DropdownMenuContent>
                                         </DropdownMenu>
                                     </TableCell>
                                 </TableRow>
@@ -672,6 +762,22 @@ export default function ReportsPage() {
                                 </TabsList>
 
                                 <TabsContent value="details" className="space-y-4 mt-4">
+                                    {/* Report Image / Category Icon */}
+                                    <div className="w-full h-48 rounded-lg overflow-hidden bg-muted/30 border border-border/50">
+                                        {selectedReport.images && selectedReport.images.length > 0 ? (
+                                            <img
+                                                src={selectedReport.images[0].image_url}
+                                                alt={`Report #${selectedReport.report_number}`}
+                                                className="w-full h-full object-cover"
+                                            />
+                                        ) : (
+                                            <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                                                <span className="text-4xl">{getCategoryIcon(selectedReport.category?.name, selectedReport.category?.category_group)}</span>
+                                                <p className="text-xs">{selectedReport.category?.name || selectedReport.ai_category_name || "Uncategorized"}</p>
+                                            </div>
+                                        )}
+                                    </div>
+
                                     {/* Description */}
                                     <div>
                                         <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
@@ -747,6 +853,43 @@ export default function ReportsPage() {
                                         </div>
                                     )}
 
+                                    {/* Admin / Worker Notes */}
+                                    {(selectedReport.assignment?.assignment_note || selectedReport.assignment?.worker_note) && (
+                                        <div className="space-y-2">
+                                            {selectedReport.assignment?.assignment_note && (
+                                                <div className="flex items-start gap-2 p-2.5 rounded-lg bg-muted/50 border border-border/50">
+                                                    <MessageSquare className="w-3.5 h-3.5 text-muted-foreground mt-0.5" />
+                                                    <div>
+                                                        <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Admin Note</p>
+                                                        <p className="text-xs mt-0.5">{selectedReport.assignment.assignment_note}</p>
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {selectedReport.assignment?.worker_note && (
+                                                <div className="flex items-start gap-2 p-2.5 rounded-lg bg-muted/50 border border-border/50">
+                                                    <MessageSquare className="w-3.5 h-3.5 text-muted-foreground mt-0.5" />
+                                                    <div>
+                                                        <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Worker Note</p>
+                                                        <p className="text-xs mt-0.5">{selectedReport.assignment.worker_note}</p>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* Rejection info */}
+                                    {selectedReport.status === "rejected" && (
+                                        <div className="flex items-start gap-2 p-2.5 rounded-lg bg-destructive/5 border border-destructive/20">
+                                            <XCircle className="w-4 h-4 text-destructive mt-0.5" />
+                                            <div>
+                                                <p className="text-xs font-medium text-destructive">Report Rejected</p>
+                                                {selectedReport.assignment?.assignment_note && (
+                                                    <p className="text-[11px] text-muted-foreground mt-0.5">{selectedReport.assignment.assignment_note}</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
+
                                     {/* Actions */}
                                     <div className="flex items-center gap-2">
                                         <Select
@@ -761,12 +904,14 @@ export default function ReportsPage() {
                                                 <SelectItem value="in_progress">In Progress</SelectItem>
                                                 <SelectItem value="resolved">Resolved</SelectItem>
                                                 <SelectItem value="closed">Closed</SelectItem>
+                                                <SelectItem value="rejected">Rejected</SelectItem>
                                             </SelectContent>
                                         </Select>
                                         <Button
                                             variant="outline"
                                             size="sm"
                                             className="text-xs h-9 gap-1.5"
+                                            disabled={selectedReport.status === "rejected"}
                                             onClick={() => {
                                                 setAssignDialog(selectedReport);
                                             }}
@@ -870,6 +1015,12 @@ export default function ReportsPage() {
                                                 time: new Date(selectedReport.resolved_at).toLocaleString(),
                                                 dot: "bg-success",
                                             }] : []),
+                                            ...(selectedReport.status === "rejected" && selectedReport.assignment?.rejected_at ? [{
+                                                action: "Report rejected",
+                                                by: "Admin",
+                                                time: new Date(selectedReport.assignment.rejected_at).toLocaleString(),
+                                                dot: "bg-destructive",
+                                            }] : []),
                                         ].map((item, i, arr) => (
                                             <div
                                                 key={i}
@@ -894,6 +1045,49 @@ export default function ReportsPage() {
                             </Tabs>
                         </>
                     )}
+                </DialogContent>
+            </Dialog>
+
+            {/* Reject Report Dialog */}
+            <Dialog open={!!rejectDialog} onOpenChange={(open) => { if (!open) { setRejectDialog(null); setRejectNote(""); } }}>
+                <DialogContent className="max-w-sm">
+                    <DialogHeader>
+                        <DialogTitle className="text-base flex items-center gap-2">
+                            <XCircle className="w-4 h-4 text-destructive" />
+                            Reject Report
+                        </DialogTitle>
+                        {rejectDialog && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                                Rejecting <span className="font-medium text-foreground">RPT-{rejectDialog.report_number}</span>
+                            </p>
+                        )}
+                    </DialogHeader>
+                    <div className="space-y-3 mt-2">
+                        <div className="space-y-1.5">
+                            <Label className="text-xs">Rejection Reason</Label>
+                            <textarea
+                                className="w-full min-h-20 rounded-md border border-input bg-background px-3 py-2 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
+                                placeholder="Provide a reason for rejecting this report..."
+                                value={rejectNote}
+                                onChange={(e) => setRejectNote(e.target.value)}
+                            />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <Button variant="outline" size="sm" className="text-xs h-8" onClick={() => { setRejectDialog(null); setRejectNote(""); }}>
+                                Cancel
+                            </Button>
+                            <Button
+                                variant="destructive"
+                                size="sm"
+                                className="text-xs h-8"
+                                disabled={!rejectNote.trim() || rejecting}
+                                onClick={handleRejectReport}
+                            >
+                                {rejecting ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <XCircle className="w-3 h-3 mr-1" />}
+                                Reject Report
+                            </Button>
+                        </div>
+                    </div>
                 </DialogContent>
             </Dialog>
 
