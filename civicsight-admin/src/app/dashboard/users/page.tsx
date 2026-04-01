@@ -21,6 +21,8 @@ import {
     X,
     Download,
     Filter,
+    ChevronLeft,
+    ChevronRight,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -95,6 +97,10 @@ export default function UsersPage() {
     const [searchQuery, setSearchQuery] = useState("");
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+
+    // Pagination state
+    const [currentPage, setCurrentPage] = useState(1);
+    const PAGE_SIZE = 25;
 
     // Sorting state
     const [sortField, setSortField] = useState<SortField>("name");
@@ -284,6 +290,17 @@ export default function UsersPage() {
         return result;
     }, [citizens, searchQuery, dateFrom, dateTo, sortField, sortDir]);
 
+    // Reset to page 1 when filters change
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchQuery, dateFrom, dateTo, sortField, sortDir]);
+
+    const totalPages = Math.max(1, Math.ceil(filteredCitizens.length / PAGE_SIZE));
+    const paginatedCitizens = filteredCitizens.slice(
+        (currentPage - 1) * PAGE_SIZE,
+        currentPage * PAGE_SIZE
+    );
+
     const filteredWorkers = workers.filter(
         (u) =>
             !searchQuery ||
@@ -437,7 +454,7 @@ export default function UsersPage() {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {filteredCitizens.map((user) => (
+                                    {paginatedCitizens.map((user) => (
                                         <TableRow
                                             key={user.uid}
                                             className="cursor-pointer border-border/30 hover:bg-muted/50 transition-colors group"
@@ -510,6 +527,46 @@ export default function UsersPage() {
                                     ))}
                                 </TableBody>
                             </Table>
+
+                            {/* Pagination */}
+                            {filteredCitizens.length > PAGE_SIZE && (
+                                <div className="flex items-center justify-between px-6 py-3 border-t border-border/50">
+                                    <p className="text-xs text-muted-foreground">
+                                        Showing {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filteredCitizens.length)} of {filteredCitizens.length}
+                                    </p>
+                                    <div className="flex items-center gap-1">
+                                        <Button
+                                            variant="outline"
+                                            size="icon"
+                                            className="w-8 h-8"
+                                            disabled={currentPage === 1}
+                                            onClick={() => setCurrentPage((p) => p - 1)}
+                                        >
+                                            <ChevronLeft className="w-4 h-4" />
+                                        </Button>
+                                        {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                                            <Button
+                                                key={page}
+                                                variant={page === currentPage ? "default" : "outline"}
+                                                size="icon"
+                                                className="w-8 h-8 text-xs"
+                                                onClick={() => setCurrentPage(page)}
+                                            >
+                                                {page}
+                                            </Button>
+                                        ))}
+                                        <Button
+                                            variant="outline"
+                                            size="icon"
+                                            className="w-8 h-8"
+                                            disabled={currentPage === totalPages}
+                                            onClick={() => setCurrentPage((p) => p + 1)}
+                                        >
+                                            <ChevronRight className="w-4 h-4" />
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
                 </TabsContent>

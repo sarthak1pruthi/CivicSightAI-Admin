@@ -8,7 +8,7 @@ import {
     InfoWindow,
     useMap,
 } from "@vis.gl/react-google-maps";
-import { Filter, Layers, CircleDot, Loader2 } from "lucide-react";
+import { Filter, Layers, CircleDot, Loader2, Flame } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -66,6 +66,46 @@ const statusColors: Record<string, string> = {
 // Default center: Downtown Toronto
 const DEFAULT_CENTER = { lat: 43.6532, lng: -79.3832 };
 const DEFAULT_ZOOM = 14;
+
+type ViewMode = "pins" | "heatmap";
+
+// Heatmap layer component
+function HeatmapLayer({ points }: { points: { lat: number; lng: number; weight: number }[] }) {
+    const map = useMap();
+    useEffect(() => {
+        if (!map || !window.google?.maps?.visualization) return;
+
+        const heatmapData = points.map(
+            (p) =>
+                ({
+                    location: new google.maps.LatLng(p.lat, p.lng),
+                    weight: p.weight,
+                } as google.maps.visualization.WeightedLocation)
+        );
+
+        const heatmap = new google.maps.visualization.HeatmapLayer({
+            data: heatmapData,
+            map,
+            radius: 40,
+            opacity: 0.7,
+            gradient: [
+                "rgba(0, 255, 0, 0)",
+                "rgba(0, 255, 0, 1)",
+                "rgba(173, 255, 47, 1)",
+                "rgba(255, 255, 0, 1)",
+                "rgba(255, 165, 0, 1)",
+                "rgba(255, 69, 0, 1)",
+                "rgba(255, 0, 0, 1)",
+            ],
+        });
+
+        return () => {
+            heatmap.setMap(null);
+        };
+    }, [map, points]);
+
+    return null;
+}
 
 // Component to hide POIs after map loads (styles prop is ignored when mapId is set)
 function HidePOIs() {
@@ -126,6 +166,7 @@ export default function MapPage() {
     const [loading, setLoading] = useState(true);
     const [selectedReport, setSelectedReport] = useState<MapPin | null>(null);
     const [activeFilters, setActiveFilters] = useState<string[]>([]);
+    const [viewMode, setViewMode] = useState<ViewMode>("pins");
 
     useEffect(() => {
         (async () => {
@@ -231,8 +272,31 @@ export default function MapPage() {
                         );
                     })}
                 </div>
-                <div className="text-xs text-muted-foreground">
-                    {filteredPins.length} reports shown
+                <div className="flex items-center gap-2">
+                    <div className="flex items-center border rounded-lg overflow-hidden">
+                        <Button
+                            variant={viewMode === "pins" ? "default" : "ghost"}
+                            size="sm"
+                            className="text-xs h-7 rounded-none gap-1"
+                            onClick={() => setViewMode("pins")}
+                        >
+                            <CircleDot className="w-3 h-3" />
+                            Pins
+                        </Button>
+                        <Button
+                            variant={viewMode === "heatmap" ? "default" : "ghost"}
+                            size="sm"
+                            className="text-xs h-7 rounded-none gap-1"
+                            onClick={() => setViewMode("heatmap")}
+                        >
+                            <Flame className="w-3 h-3" />
+                            Heatmap
+                        </Button>
+                    </div>
+                    <Separator orientation="vertical" className="h-5" />
+                    <span className="text-xs text-muted-foreground">
+                        {filteredPins.length} reports shown
+                    </span>
                 </div>
             </div>
 
@@ -240,7 +304,7 @@ export default function MapPage() {
             <Card className="border-border/50 overflow-hidden">
                 <CardContent className="p-0">
                     <div className="w-full h-[calc(100vh-240px)]">
-                        <APIProvider apiKey={GOOGLE_MAPS_API_KEY}>
+                        <APIProvider apiKey={GOOGLE_MAPS_API_KEY} libraries={["visualization"]}>
                             <Map
                                 defaultCenter={DEFAULT_CENTER}
                                 defaultZoom={DEFAULT_ZOOM}
@@ -256,16 +320,33 @@ export default function MapPage() {
                                 onClick={() => setSelectedReport(null)}
                             >
                                 <HidePOIs />
-                                {filteredPins.map((report) => (
-                                    <ReportMarker
-                                        key={report.id}
-                                        report={report}
-                                        isSelected={selectedReport?.id === report.id}
-                                        onClick={() => setSelectedReport(report)}
+                                {viewMode === "heatmap" && (
+                                    <HeatmapLayer
+                                        points={filteredPins.map((p) => ({
+                                            lat: p.lat,
+                                            lng: p.lng,
+                                            weight:
+                                                p.severity === "Critical"
+                                                    ? 5
+                                                    : p.severity === "High"
+                                                    ? 3
+                                                    : p.severity === "Medium"
+                                                    ? 2
+                                                    : 1,
+                                        }))}
                                     />
-                                ))}
+                                )}
+                                {viewMode === "pins" &&
+                                    filteredPins.map((report) => (
+                                        <ReportMarker
+                                            key={report.id}
+                                            report={report}
+                                            isSelected={selectedReport?.id === report.id}
+                                            onClick={() => setSelectedReport(report)}
+                                        />
+                                    ))}
 
-                                {selectedReport && (
+                                {viewMode === "pins" && selectedReport && (
                                     <InfoWindow
                                         position={{
                                             lat: selectedReport.lat,

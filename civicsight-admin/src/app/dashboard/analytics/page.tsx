@@ -1,15 +1,19 @@
 "use client";
 
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { Download, Loader2, AlertTriangle } from "lucide-react";
+import { Download, Loader2, AlertTriangle, Users, TrendingUp, Briefcase, Star, CheckCircle, XCircle, ClipboardList } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     LineChart, Line, PieChart, Pie, Cell, Sector,
     RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+    AreaChart, Area,
 } from "recharts";
-import { fetchAnalyticsData } from "@/lib/queries";
+import { fetchAnalyticsData, fetchCitizens, fetchWorkers } from "@/lib/queries";
+import type { WorkerWithProfile } from "@/lib/types";
 
 type PeriodKey = "7D" | "30D" | "90D" | "All";
 
@@ -44,14 +48,23 @@ export default function AnalyticsPage() {
     const [allReports, setAllReports] = useState<RawReport[]>([]);
     const [catsMap, setCatsMap] = useState<Map<number, string>>(new Map());
     const [locMap, setLocMap] = useState<Map<string, { city: string | null; neighbourhood: string | null }>>(new Map());
+    const [citizenDates, setCitizenDates] = useState<string[]>([]);
+    const [workers, setWorkers] = useState<WorkerWithProfile[]>([]);
+    const [activeTab, setActiveTab] = useState("reports");
 
     const loadData = useCallback(async () => {
         try {
             setLoading(true);
-            const data = await fetchAnalyticsData();
+            const [data, citizens, workersData] = await Promise.all([
+                fetchAnalyticsData(),
+                fetchCitizens(),
+                fetchWorkers(),
+            ]);
             setAllReports(data.reports);
             setCatsMap(data.catsMap);
             setLocMap(data.locMap);
+            setCitizenDates(citizens.map((c) => c.created_at));
+            setWorkers(workersData);
         } catch (err) {
             setError(err instanceof Error ? err.message : "Failed to load analytics");
         } finally {
@@ -171,6 +184,94 @@ export default function AnalyticsPage() {
             }));
     }, [reports, locMap]);
 
+    // Citizens growth data — cumulative by month
+    const citizenGrowthData = useMemo(() => {
+        const sorted = [...citizenDates].sort();
+        if (sorted.length === 0) return [];
+
+        const buckets = new Map<string, number>();
+        for (const d of sorted) {
+            const key = d.slice(0, 7); // YYYY-MM
+            buckets.set(key, (buckets.get(key) || 0) + 1);
+        }
+
+        const months = Array.from(buckets.entries()).sort(([a], [b]) => a.localeCompare(b));
+        let cumulative = 0;
+        return months.map(([month, count]) => {
+            cumulative += count;
+            return {
+                month: new Date(month + "-01").toLocaleDateString("en-US", { month: "short", year: "2-digit" }),
+                newCitizens: count,
+                totalCitizens: cumulative,
+            };
+        });
+    }, [citizenDates]);
+
+    const totalCitizens = citizenDates.length;
+    const thisMonthCitizens = citizenDates.filter((d) => {
+        const now = new Date();
+        const created = new Date(d);
+        return created.getMonth() === now.getMonth() && created.getFullYear() === now.getFullYear();
+    }).length;
+
+    // Worker analytics data
+    const workerStats = useMemo(() => {
+        const total = workers.length;
+        const available = workers.filter((w) => w.worker_profile?.is_available).length;
+        const totalCompleted = workers.reduce((s, w) => s + (w.worker_profile?.total_completed || 0), 0);
+        const totalRejected = workers.reduce((s, w) => s + (w.worker_profile?.total_rejected || 0), 0);
+        const avgRating = total > 0 ? workers.reduce((s, w) => s + (w.worker_profile?.avg_rating || 0), 0) / total : 0;
+        const totalTasks = workers.reduce((s, w) => s + (w.worker_profile?.current_task_count || 0), 0);
+        return { total, available, totalCompleted, totalRejected, avgRating, totalTasks };
+    }, [workers]);
+
+    const workerPerformanceData = useMemo(() => {
+        return workers
+            .filter((w) => w.worker_profile)
+            .sort((a, b) => (b.worker_profile?.total_completed || 0) - (a.worker_profile?.total_completed || 0))
+            .slice(0, 10)
+            .map((w) => ({
+                name: (w.full_name || "Unknown").split(" ")[0],
+                completed: w.worker_profile?.total_completed || 0,
+                rejected: w.worker_profile?.total_rejected || 0,
+                rating: w.worker_profile?.avg_rating || 0,
+            }));
+    }, [workers]);
+
+    const workerServiceAreaData = useMemo(() => {
+        const areas: Record<string, { count: number; completed: number; available: number }> = {};
+        for (const w of workers) {
+            const area = w.worker_profile?.service_area || "Unassigned";
+            const a = areas[area] || { count: 0, completed: 0, available: 0 };
+            a.count++;
+            a.completed += w.worker_profile?.total_completed || 0;
+            if (w.worker_profile?.is_available) a.available++;
+            areas[area] = a;
+        }
+        return Object.entries(areas)
+            .sort(([, a], [, b]) => b.count - a.count)
+            .map(([area, v]) => ({ area, ...v }));
+    }, [workers]);
+
+    const workerWorkloadData = useMemo(() => {
+        const buckets = { light: 0, moderate: 0, heavy: 0, maxed: 0 };
+        for (const w of workers) {
+            const current = w.worker_profile?.current_task_count || 0;
+            const max = w.worker_profile?.max_task_limit || 5;
+            const ratio = current / max;
+            if (ratio === 0) buckets.light++;
+            else if (ratio < 0.5) buckets.moderate++;
+            else if (ratio < 1) buckets.heavy++;
+            else buckets.maxed++;
+        }
+        return [
+            { name: "Idle", value: buckets.light, color: "#6b7280" },
+            { name: "Moderate", value: buckets.moderate, color: "#3b82f6" },
+            { name: "Heavy", value: buckets.heavy, color: "#f59e0b" },
+            { name: "At Capacity", value: buckets.maxed, color: "#ef4444" },
+        ].filter((d) => d.value > 0);
+    }, [workers]);
+
     const handleExport = () => {
         const csv = [
             "Date,Reports,Resolved",
@@ -206,27 +307,35 @@ export default function AnalyticsPage() {
 
     return (
         <div className="space-y-6">
-            {/* Top controls */}
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                    {(["7D", "30D", "90D", "All"] as PeriodKey[]).map((period) => (
-                        <Button
-                            key={period}
-                            variant={period === selectedPeriod ? "default" : "ghost"}
-                            size="sm"
-                            className="text-xs h-8 px-3"
-                            onClick={() => setSelectedPeriod(period)}
-                        >
-                            {period}
-                        </Button>
-                    ))}
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                <div className="flex items-center justify-between">
+                    <TabsList className="grid w-80 grid-cols-3 h-9">
+                        <TabsTrigger value="reports" className="text-xs">Reports</TabsTrigger>
+                        <TabsTrigger value="citizens" className="text-xs">Citizens</TabsTrigger>
+                        <TabsTrigger value="workers" className="text-xs">Workers</TabsTrigger>
+                    </TabsList>
+                    {activeTab === "reports" && (
+                        <div className="flex items-center gap-2">
+                            {(["7D", "30D", "90D", "All"] as PeriodKey[]).map((period) => (
+                                <Button
+                                    key={period}
+                                    variant={period === selectedPeriod ? "default" : "ghost"}
+                                    size="sm"
+                                    className="text-xs h-8 px-3"
+                                    onClick={() => setSelectedPeriod(period)}
+                                >
+                                    {period}
+                                </Button>
+                            ))}
+                            <Button variant="outline" size="sm" className="text-xs h-8 gap-1.5" onClick={handleExport}>
+                                <Download className="w-3.5 h-3.5" /> Export
+                            </Button>
+                        </div>
+                    )}
                 </div>
-                <Button variant="outline" size="sm" className="text-xs h-8 gap-1.5" onClick={handleExport}>
-                    <Download className="w-3.5 h-3.5" /> Export Report
-                </Button>
-            </div>
 
-            {/* Row 1: Report Volume + Resolution Time */}
+                {/* ─── REPORTS TAB ─── */}
+                <TabsContent value="reports" className="mt-4 space-y-4">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <Card className="border-border/50">
                     <CardHeader className="pb-2">
@@ -234,7 +343,7 @@ export default function AnalyticsPage() {
                         <p className="text-xs text-muted-foreground">New reports vs resolved over the {periodLabels[selectedPeriod]}</p>
                     </CardHeader>
                     <CardContent>
-                        <div className="h-[280px]">
+                        <div className="h-70">
                             <ResponsiveContainer width="100%" height="100%">
                                 <BarChart data={volumeData} barGap={2}>
                                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.1)" vertical={false} />
@@ -255,7 +364,7 @@ export default function AnalyticsPage() {
                         <p className="text-xs text-muted-foreground">Days to resolve, {periodLabels[selectedPeriod]}</p>
                     </CardHeader>
                     <CardContent>
-                        <div className="h-[280px]">
+                        <div className="h-70">
                             <ResponsiveContainer width="100%" height="100%">
                                 <LineChart data={resolutionData}>
                                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.1)" vertical={false} />
@@ -278,7 +387,7 @@ export default function AnalyticsPage() {
                         <p className="text-xs text-muted-foreground">Report status breakdown ({periodLabels[selectedPeriod]})</p>
                     </CardHeader>
                     <CardContent>
-                        <div className="h-[200px]">
+                        <div className="h-50">
                             <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
                                     <Pie
@@ -322,7 +431,7 @@ export default function AnalyticsPage() {
                         <p className="text-xs text-muted-foreground">Performance score by category</p>
                     </CardHeader>
                     <CardContent>
-                        <div className="h-[280px]">
+                        <div className="h-70">
                             <ResponsiveContainer width="100%" height="100%">
                                 <RadarChart data={radarData}>
                                     <PolarGrid stroke="rgba(128,128,128,0.15)" />
@@ -351,7 +460,7 @@ export default function AnalyticsPage() {
                                             <span className="text-muted-foreground">{resolveRate}% resolved · {area.avgDays}d avg</span>
                                         </div>
                                         <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
-                                            <div className="h-full rounded-full bg-gradient-to-r from-primary to-primary/70 transition-all duration-500" style={{ width: `${resolveRate}%` }} />
+                                            <div className="h-full rounded-full bg-linear-to-r from-primary to-primary/70 transition-all duration-500" style={{ width: `${resolveRate}%` }} />
                                         </div>
                                         <div className="flex items-center justify-between text-[10px] text-muted-foreground">
                                             <span>{area.resolved} resolved</span>
@@ -367,6 +476,276 @@ export default function AnalyticsPage() {
                     </CardContent>
                 </Card>
             </div>
+                </TabsContent>
+
+                {/* ─── CITIZENS TAB ─── */}
+                <TabsContent value="citizens" className="mt-4 space-y-4">
+                    {/* Stats Row */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <Card className="border-border/50">
+                            <CardContent className="p-6 flex flex-col justify-between h-full">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs text-muted-foreground font-medium">Total Citizens</p>
+                                        <p className="text-3xl font-bold mt-1">{totalCitizens}</p>
+                                    </div>
+                                    <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
+                                        <Users className="w-6 h-6 text-primary" />
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2 mt-4">
+                                    <div className="flex items-center gap-1 text-xs text-success">
+                                        <TrendingUp className="w-3.5 h-3.5" />
+                                        +{thisMonthCitizens}
+                                    </div>
+                                    <span className="text-xs text-muted-foreground">new this month</span>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="border-border/50">
+                            <CardContent className="p-6">
+                                <p className="text-xs text-muted-foreground font-medium">Average per Month</p>
+                                <p className="text-3xl font-bold mt-1">
+                                    {citizenGrowthData.length > 0
+                                        ? Math.round(totalCitizens / citizenGrowthData.length)
+                                        : 0}
+                                </p>
+                                <p className="text-xs text-muted-foreground mt-4">citizen sign-ups</p>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="border-border/50">
+                            <CardContent className="p-6">
+                                <p className="text-xs text-muted-foreground font-medium">Peak Month</p>
+                                {citizenGrowthData.length > 0 ? (() => {
+                                    const peak = citizenGrowthData.reduce((max, d) => d.newCitizens > max.newCitizens ? d : max);
+                                    return (
+                                        <>
+                                            <p className="text-3xl font-bold mt-1">{peak.newCitizens}</p>
+                                            <p className="text-xs text-muted-foreground mt-4">{peak.month}</p>
+                                        </>
+                                    );
+                                })() : <p className="text-3xl font-bold mt-1">0</p>}
+                            </CardContent>
+                        </Card>
+                    </div>
+
+                    {/* Growth Chart */}
+                    <Card className="border-border/50">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-sm font-semibold">Citizen Growth</CardTitle>
+                            <p className="text-xs text-muted-foreground">Cumulative citizen registrations over time</p>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="h-80">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <AreaChart data={citizenGrowthData}>
+                                        <defs>
+                                            <linearGradient id="citizenGradient" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                                                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                                            </linearGradient>
+                                        </defs>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.1)" vertical={false} />
+                                        <XAxis dataKey="month" fontSize={11} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.4)" />
+                                        <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.4)" />
+                                        <Tooltip
+                                            contentStyle={tooltipStyle}
+                                            labelStyle={tooltipLabelStyle}
+                                            itemStyle={tooltipItemStyle}
+                                            formatter={(value: number | undefined, name?: string) => [
+                                                value ?? 0,
+                                                name === "totalCitizens" ? "Total Citizens" : "New Citizens",
+                                            ]}
+                                        />
+                                        <Area type="monotone" dataKey="totalCitizens" stroke="#3b82f6" strokeWidth={2.5} fill="url(#citizenGradient)" name="totalCitizens" />
+                                        <Bar dataKey="newCitizens" fill="#3b82f6" opacity={0.4} radius={[3, 3, 0, 0]} name="newCitizens" barSize={20} />
+                                    </AreaChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    {/* Monthly Breakdown Table */}
+                    <Card className="border-border/50">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-sm font-semibold">Monthly Registrations</CardTitle>
+                            <p className="text-xs text-muted-foreground">New citizens per month</p>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="h-62.5">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={citizenGrowthData}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.1)" vertical={false} />
+                                        <XAxis dataKey="month" fontSize={11} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.4)" />
+                                        <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.4)" />
+                                        <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+                                        <Bar dataKey="newCitizens" fill="#8b5cf6" radius={[4, 4, 0, 0]} name="New Citizens" />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+
+                {/* ─── WORKERS TAB ─── */}
+                <TabsContent value="workers" className="mt-4 space-y-4">
+                    {/* Stats Row */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <Card className="border-border/50">
+                            <CardContent className="p-5">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs text-muted-foreground font-medium">Total Workers</p>
+                                        <p className="text-2xl font-bold mt-1">{workerStats.total}</p>
+                                    </div>
+                                    <div className="w-10 h-10 rounded-lg bg-info/10 flex items-center justify-center">
+                                        <Briefcase className="w-5 h-5 text-info" />
+                                    </div>
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-2">{workerStats.available} available now</p>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="border-border/50">
+                            <CardContent className="p-5">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs text-muted-foreground font-medium">Total Completed</p>
+                                        <p className="text-2xl font-bold mt-1">{workerStats.totalCompleted}</p>
+                                    </div>
+                                    <div className="w-10 h-10 rounded-lg bg-success/10 flex items-center justify-center">
+                                        <CheckCircle className="w-5 h-5 text-success" />
+                                    </div>
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-2">{workerStats.totalRejected} rejected</p>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="border-border/50">
+                            <CardContent className="p-5">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs text-muted-foreground font-medium">Avg Rating</p>
+                                        <p className="text-2xl font-bold mt-1">{workerStats.avgRating.toFixed(1)}</p>
+                                    </div>
+                                    <div className="w-10 h-10 rounded-lg bg-warning/10 flex items-center justify-center">
+                                        <Star className="w-5 h-5 text-warning" />
+                                    </div>
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-2">out of 5.0</p>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="border-border/50">
+                            <CardContent className="p-5">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <p className="text-xs text-muted-foreground font-medium">Active Tasks</p>
+                                        <p className="text-2xl font-bold mt-1">{workerStats.totalTasks}</p>
+                                    </div>
+                                    <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                                        <ClipboardList className="w-5 h-5 text-primary" />
+                                    </div>
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-2">in progress</p>
+                            </CardContent>
+                        </Card>
+                    </div>
+
+                    {/* Worker Performance Chart */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <Card className="border-border/50">
+                            <CardHeader className="pb-2">
+                                <CardTitle className="text-sm font-semibold">Top Worker Performance</CardTitle>
+                                <p className="text-xs text-muted-foreground">Completed vs rejected tasks by worker</p>
+                            </CardHeader>
+                            <CardContent>
+                                <div className="h-75">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart data={workerPerformanceData} layout="vertical" barGap={2}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.1)" horizontal={false} />
+                                            <XAxis type="number" fontSize={11} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.4)" />
+                                            <YAxis type="category" dataKey="name" fontSize={11} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.4)" width={70} />
+                                            <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+                                            <Bar dataKey="completed" fill="#22c55e" radius={[0, 4, 4, 0]} name="Completed" />
+                                            <Bar dataKey="rejected" fill="#ef4444" radius={[0, 4, 4, 0]} name="Rejected" />
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="border-border/50">
+                            <CardHeader className="pb-2">
+                                <CardTitle className="text-sm font-semibold">Workload Distribution</CardTitle>
+                                <p className="text-xs text-muted-foreground">Current task load across workers</p>
+                            </CardHeader>
+                            <CardContent>
+                                <div className="h-55">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <PieChart>
+                                            <Pie
+                                                data={workerWorkloadData} cx="50%" cy="50%"
+                                                innerRadius={55} outerRadius={80} paddingAngle={4}
+                                                dataKey="value" strokeWidth={0}
+                                            >
+                                                {workerWorkloadData.map((entry, index) => (
+                                                    <Cell key={`wl-${index}`} fill={entry.color} />
+                                                ))}
+                                            </Pie>
+                                            <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v: number | undefined, name?: string) => [`${v ?? 0} workers`, name ?? ""]} cursor={false} />
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                </div>
+                                <div className="space-y-2">
+                                    {workerWorkloadData.map((item) => (
+                                        <div key={item.name} className="flex items-center justify-between text-xs">
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                                                <span className="text-muted-foreground">{item.name}</span>
+                                            </div>
+                                            <span className="font-medium">{item.value}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </div>
+
+                    {/* Service Area Breakdown */}
+                    <Card className="border-border/50">
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-sm font-semibold">Workers by Service Area</CardTitle>
+                            <p className="text-xs text-muted-foreground">Distribution and performance per area</p>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="space-y-4 mt-2">
+                                {workerServiceAreaData.map((area) => (
+                                    <div key={area.area} className="space-y-1.5">
+                                        <div className="flex items-center justify-between text-xs">
+                                            <span className="font-medium">{area.area}</span>
+                                            <span className="text-muted-foreground">
+                                                {area.count} workers · {area.available} available · {area.completed} completed
+                                            </span>
+                                        </div>
+                                        <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
+                                            <div
+                                                className="h-full rounded-full bg-linear-to-r from-info to-info/70 transition-all duration-500"
+                                                style={{ width: `${workers.length > 0 ? Math.round((area.count / workers.length) * 100) : 0}%` }}
+                                            />
+                                        </div>
+                                    </div>
+                                ))}
+                                {workerServiceAreaData.length === 0 && (
+                                    <p className="text-xs text-muted-foreground text-center py-4">No worker data available</p>
+                                )}
+                            </div>
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+            </Tabs>
         </div>
     );
 }
