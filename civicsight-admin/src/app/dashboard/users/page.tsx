@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
     Search,
     MoreHorizontal,
@@ -175,42 +175,49 @@ export default function UsersPage() {
         // "custom" leaves dates as-is for manual input
     };
 
+    const contentRef = useRef<HTMLDivElement>(null);
+
     const handleExportPDF = async () => {
+        if (!contentRef.current) return;
+        const html2canvas = (await import("html2canvas")).default;
         const { default: jsPDF } = await import("jspdf");
-        const autoTable = (await import("jspdf-autotable")).default;
 
-        const doc = new jsPDF({ orientation: "landscape" });
-
-        doc.setFontSize(18);
-        doc.setTextColor(40, 40, 40);
-        doc.text("CivicSight AI - Citizens", 14, 20);
-
-        doc.setFontSize(10);
-        doc.setTextColor(120, 120, 120);
-        doc.text(
-            `Generated on ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}  |  ${filteredCitizens.length} citizens`,
-            14, 28
-        );
-
-        const tableData = filteredCitizens.map((u) => [
-            u.full_name || "Unnamed",
-            u.email,
-            (u.citizen_profile?.city || "N/A") + (u.citizen_profile?.province ? `, ${u.citizen_profile.province}` : ""),
-            String(u.citizen_profile?.total_reports || 0),
-            u.status,
-            new Date(u.created_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }),
-            u.last_login_at ? new Date(u.last_login_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "Never",
-        ]);
-
-        autoTable(doc, {
-            startY: 34,
-            head: [["Name", "Email", "Location", "Reports", "Status", "Joined", "Last Active"]],
-            body: tableData,
-            styles: { fontSize: 8, cellPadding: 3 },
-            headStyles: { fillColor: [30, 30, 40], textColor: [255, 255, 255], fontStyle: "bold" },
-            alternateRowStyles: { fillColor: [245, 245, 250] },
+        const canvas = await html2canvas(contentRef.current, {
+            scale: 2,
+            useCORS: true,
+            logging: false,
+            backgroundColor: "#ffffff",
         });
 
+        const imgData = canvas.toDataURL("image/png");
+        const doc = new jsPDF({ orientation: "landscape" });
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const margin = 10;
+        const usableWidth = pageWidth - 2 * margin;
+        const usableHeight = pageHeight - 2 * margin;
+        const ratio = usableWidth / canvas.width;
+        const scaledHeight = canvas.height * ratio;
+
+        if (scaledHeight <= usableHeight) {
+            doc.addImage(imgData, "PNG", margin, margin, usableWidth, scaledHeight);
+        } else {
+            const pageCanvasHeight = usableHeight / ratio;
+            let yOffset = 0;
+            let pageNum = 0;
+            while (yOffset < canvas.height) {
+                if (pageNum > 0) doc.addPage();
+                const sliceH = Math.min(pageCanvasHeight, canvas.height - yOffset);
+                const sliceCanvas = document.createElement("canvas");
+                sliceCanvas.width = canvas.width;
+                sliceCanvas.height = sliceH;
+                const ctx = sliceCanvas.getContext("2d");
+                ctx?.drawImage(canvas, 0, yOffset, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
+                doc.addImage(sliceCanvas.toDataURL("image/png"), "PNG", margin, margin, usableWidth, sliceH * ratio);
+                yOffset += pageCanvasHeight;
+                pageNum++;
+            }
+        }
         doc.save(`civicsight-citizens-${new Date().toISOString().slice(0, 10)}.pdf`);
     };
 
@@ -309,40 +316,46 @@ export default function UsersPage() {
     );
 
     const handleExportWorkersPDF = async () => {
+        if (!contentRef.current) return;
+        const html2canvas = (await import("html2canvas")).default;
         const { default: jsPDF } = await import("jspdf");
-        const autoTable = (await import("jspdf-autotable")).default;
-        const doc = new jsPDF({ orientation: "landscape" });
 
-        doc.setFontSize(18);
-        doc.setTextColor(40, 40, 40);
-        doc.text("CivicSight AI - Workers", 14, 20);
-
-        doc.setFontSize(10);
-        doc.setTextColor(120, 120, 120);
-        doc.text(
-            `Generated on ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}  |  ${filteredWorkers.length} workers`,
-            14, 28
-        );
-
-        autoTable(doc, {
-            startY: 34,
-            head: [["Name", "Email", "Service Area", "Completed", "Rejected", "Rating", "Current Tasks", "Available", "Status"]],
-            body: filteredWorkers.map((w) => [
-                w.full_name || "Unnamed",
-                w.email,
-                w.worker_profile?.service_area || "Unassigned",
-                String(w.worker_profile?.total_completed || 0),
-                String(w.worker_profile?.total_rejected || 0),
-                String(w.worker_profile?.avg_rating?.toFixed(1) || "0"),
-                String(w.worker_profile?.current_task_count || 0),
-                w.worker_profile?.is_available ? "Yes" : "No",
-                w.status,
-            ]),
-            styles: { fontSize: 8, cellPadding: 3 },
-            headStyles: { fillColor: [30, 30, 40], textColor: [255, 255, 255], fontStyle: "bold" },
-            alternateRowStyles: { fillColor: [245, 245, 250] },
+        const canvas = await html2canvas(contentRef.current, {
+            scale: 2,
+            useCORS: true,
+            logging: false,
+            backgroundColor: "#ffffff",
         });
 
+        const imgData = canvas.toDataURL("image/png");
+        const doc = new jsPDF({ orientation: "landscape" });
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const margin = 10;
+        const usableWidth = pageWidth - 2 * margin;
+        const usableHeight = pageHeight - 2 * margin;
+        const ratio = usableWidth / canvas.width;
+        const scaledHeight = canvas.height * ratio;
+
+        if (scaledHeight <= usableHeight) {
+            doc.addImage(imgData, "PNG", margin, margin, usableWidth, scaledHeight);
+        } else {
+            const pageCanvasHeight = usableHeight / ratio;
+            let yOffset = 0;
+            let pageNum = 0;
+            while (yOffset < canvas.height) {
+                if (pageNum > 0) doc.addPage();
+                const sliceH = Math.min(pageCanvasHeight, canvas.height - yOffset);
+                const sliceCanvas = document.createElement("canvas");
+                sliceCanvas.width = canvas.width;
+                sliceCanvas.height = sliceH;
+                const ctx = sliceCanvas.getContext("2d");
+                ctx?.drawImage(canvas, 0, yOffset, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
+                doc.addImage(sliceCanvas.toDataURL("image/png"), "PNG", margin, margin, usableWidth, sliceH * ratio);
+                yOffset += pageCanvasHeight;
+                pageNum++;
+            }
+        }
         doc.save(`civicsight-workers-${new Date().toISOString().slice(0, 10)}.pdf`);
     };
 
@@ -391,7 +404,7 @@ export default function UsersPage() {
     }
 
     return (
-        <div className="space-y-6">
+        <div ref={contentRef} className="space-y-6">
             <Tabs defaultValue="citizens" className="w-full">
                 <TabsList className="grid w-75 grid-cols-2 h-9">
                     <TabsTrigger value="citizens" className="text-xs">

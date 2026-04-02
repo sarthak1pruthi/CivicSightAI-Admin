@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { Download, Loader2, AlertTriangle, Users, TrendingUp, Briefcase, Star, CheckCircle, XCircle, ClipboardList, Clock, BarChart3, Target, Zap, ArrowUpRight, ArrowDownRight, ChevronDown, FileText, FileSpreadsheet } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -477,77 +477,51 @@ export default function AnalyticsPage() {
         downloadBlob(csv, filename, "text/csv");
     };
 
+    const contentRef = useRef<HTMLDivElement>(null);
+
     const handleExportPDF = async () => {
+        if (!contentRef.current) return;
+        const html2canvas = (await import("html2canvas")).default;
         const { default: jsPDF } = await import("jspdf");
-        const autoTable = (await import("jspdf-autotable")).default;
-        const doc = new jsPDF({ orientation: "landscape" });
         const stamp = new Date().toISOString().slice(0, 10);
 
-        doc.setFontSize(18);
-        doc.setTextColor(40, 40, 40);
+        const canvas = await html2canvas(contentRef.current, {
+            scale: 2,
+            useCORS: true,
+            logging: false,
+            backgroundColor: "#ffffff",
+        });
 
-        if (activeTab === "reports") {
-            doc.text("CivicSight AI - Report Analytics", 14, 20);
-            doc.setFontSize(10);
-            doc.setTextColor(120, 120, 120);
-            doc.text(`Period: ${periodLabels[selectedPeriod]}  |  ${reports.length} reports  |  Resolution rate: ${kpiStats.resolveRate}%  |  Avg resolution: ${kpiStats.avgDays}d`, 14, 28);
+        const imgData = canvas.toDataURL("image/png");
+        const doc = new jsPDF({ orientation: "landscape" });
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const margin = 10;
+        const usableWidth = pageWidth - 2 * margin;
+        const usableHeight = pageHeight - 2 * margin;
+        const ratio = usableWidth / canvas.width;
+        const scaledHeight = canvas.height * ratio;
 
-            autoTable(doc, {
-                startY: 34,
-                head: [["ID", "Status", "Severity", "Category", "Reported", "Resolved", "Citizen ID"]],
-                body: reports.map((r) => [
-                    r.id.slice(0, 8) + "…",
-                    r.status,
-                    r.ai_severity != null ? String(r.ai_severity) : "N/A",
-                    r.category_id ? (catsMap.get(r.category_id) || "Other") : (r.ai_category_name || "Other"),
-                    new Date(r.reported_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-                    getEndDate(r) ? new Date(getEndDate(r)!).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—",
-                    r.citizen_id?.slice(0, 8) + "…" || "—",
-                ]),
-                styles: { fontSize: 7, cellPadding: 2.5 },
-                headStyles: { fillColor: [30, 30, 40], textColor: [255, 255, 255], fontStyle: "bold" },
-                alternateRowStyles: { fillColor: [245, 245, 250] },
-            });
-            doc.save(`civicsight-report-analytics-${selectedPeriod}-${stamp}.pdf`);
-        } else if (activeTab === "citizens") {
-            doc.text("CivicSight AI - Citizen Growth", 14, 20);
-            doc.setFontSize(10);
-            doc.setTextColor(120, 120, 120);
-            doc.text(`Total citizens: ${totalCitizens}  |  New this month: ${thisMonthCitizens}`, 14, 28);
-
-            autoTable(doc, {
-                startY: 34,
-                head: [["Month", "New Citizens", "Total Citizens"]],
-                body: citizenGrowthData.map((d) => [d.month, String(d.newCitizens), String(d.totalCitizens)]),
-                styles: { fontSize: 9, cellPadding: 3 },
-                headStyles: { fillColor: [30, 30, 40], textColor: [255, 255, 255], fontStyle: "bold" },
-                alternateRowStyles: { fillColor: [245, 245, 250] },
-            });
-            doc.save(`civicsight-citizen-growth-${stamp}.pdf`);
+        if (scaledHeight <= usableHeight) {
+            doc.addImage(imgData, "PNG", margin, margin, usableWidth, scaledHeight);
         } else {
-            doc.text("CivicSight AI - Worker Performance", 14, 20);
-            doc.setFontSize(10);
-            doc.setTextColor(120, 120, 120);
-            doc.text(`Total workers: ${workerStats.total}  |  Available: ${workerStats.available}  |  Avg rating: ${workerStats.avgRating.toFixed(1)}  |  Total completed: ${workerStats.totalCompleted}`, 14, 28);
-
-            autoTable(doc, {
-                startY: 34,
-                head: [["Name", "Service Area", "Completed", "Rejected", "Rating", "Current Tasks", "Available"]],
-                body: workers.map((w) => [
-                    w.full_name || "Unknown",
-                    w.worker_profile?.service_area || "Unassigned",
-                    String(w.worker_profile?.total_completed || 0),
-                    String(w.worker_profile?.total_rejected || 0),
-                    String(w.worker_profile?.avg_rating?.toFixed(1) || "0"),
-                    String(w.worker_profile?.current_task_count || 0),
-                    w.worker_profile?.is_available ? "Yes" : "No",
-                ]),
-                styles: { fontSize: 8, cellPadding: 3 },
-                headStyles: { fillColor: [30, 30, 40], textColor: [255, 255, 255], fontStyle: "bold" },
-                alternateRowStyles: { fillColor: [245, 245, 250] },
-            });
-            doc.save(`civicsight-worker-performance-${stamp}.pdf`);
+            const pageCanvasHeight = usableHeight / ratio;
+            let yOffset = 0;
+            let pageNum = 0;
+            while (yOffset < canvas.height) {
+                if (pageNum > 0) doc.addPage();
+                const sliceH = Math.min(pageCanvasHeight, canvas.height - yOffset);
+                const sliceCanvas = document.createElement("canvas");
+                sliceCanvas.width = canvas.width;
+                sliceCanvas.height = sliceH;
+                const ctx = sliceCanvas.getContext("2d");
+                ctx?.drawImage(canvas, 0, yOffset, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
+                doc.addImage(sliceCanvas.toDataURL("image/png"), "PNG", margin, margin, usableWidth, sliceH * ratio);
+                yOffset += pageCanvasHeight;
+                pageNum++;
+            }
         }
+        doc.save(`civicsight-${activeTab}-analytics-${stamp}.pdf`);
     };
 
     if (loading) {
@@ -608,6 +582,7 @@ export default function AnalyticsPage() {
                     </div>
                 </div>
 
+                <div ref={contentRef}>
                 {/* ─── REPORTS TAB ─── */}
                 <TabsContent value="reports" className="mt-4 space-y-4">
 
@@ -1307,6 +1282,7 @@ export default function AnalyticsPage() {
                         </CardContent>
                     </Card>
                 </TabsContent>
+                </div>
             </Tabs>
         </div>
     );
