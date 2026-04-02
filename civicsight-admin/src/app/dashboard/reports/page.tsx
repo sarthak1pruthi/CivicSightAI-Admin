@@ -32,7 +32,7 @@ import {
     SearchX,
 } from "lucide-react";
 import { toast } from "sonner";
-import { APIProvider, Map as GoogleMap, AdvancedMarker } from "@vis.gl/react-google-maps";
+import { APIProvider, Map as GoogleMap, AdvancedMarker, Pin } from "@vis.gl/react-google-maps";
 
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1288,20 +1288,18 @@ export default function ReportsPage() {
 
                                     {/* Mini Map */}
                                     {selectedReport.location?.latitude && selectedReport.location?.longitude && GOOGLE_MAPS_API_KEY && (
-                                        <div className="w-full h-36 rounded-lg overflow-hidden border border-border/50">
+                                        <div className="w-full h-72 rounded-lg overflow-hidden border border-border/50">
                                             <APIProvider apiKey={GOOGLE_MAPS_API_KEY}>
                                                 <GoogleMap
                                                     defaultCenter={{ lat: Number(selectedReport.location.latitude), lng: Number(selectedReport.location.longitude) }}
-                                                    defaultZoom={15}
-                                                    gestureHandling="none"
-                                                    disableDefaultUI
+                                                    defaultZoom={16}
+                                                    gestureHandling="cooperative"
+                                                    disableDefaultUI={false}
                                                     mapId="civicsight-detail-map"
                                                     style={{ width: "100%", height: "100%" }}
                                                 >
                                                     <AdvancedMarker position={{ lat: Number(selectedReport.location.latitude), lng: Number(selectedReport.location.longitude) }}>
-                                                        <div className="w-6 h-6 rounded-full bg-destructive border-2 border-white shadow-lg flex items-center justify-center">
-                                                            <MapPin className="w-3.5 h-3.5 text-white" />
-                                                        </div>
+                                                        <Pin background="#dc2626" borderColor="#991b1b" glyphColor="#ffffff" scale={1.2} />
                                                     </AdvancedMarker>
                                                 </GoogleMap>
                                             </APIProvider>

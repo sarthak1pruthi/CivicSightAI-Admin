@@ -1,13 +1,13 @@
 "use client";
 
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { Download, Loader2, AlertTriangle, Users, TrendingUp, Briefcase, Star, CheckCircle, XCircle, ClipboardList } from "lucide-react";
+import { Download, Loader2, AlertTriangle, Users, TrendingUp, Briefcase, Star, CheckCircle, XCircle, ClipboardList, Clock, BarChart3, Target, Zap, ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import {
-    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
     LineChart, Line, PieChart, Pie, Cell, Sector,
     RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
     AreaChart, Area,
@@ -24,20 +24,39 @@ const tooltipItemStyle = { color: "#c4c0ba" };
 const periodDays: Record<PeriodKey, number> = { "7D": 7, "30D": 30, "90D": 90, All: 36500 };
 const periodLabels: Record<PeriodKey, string> = { "7D": "past 7 days", "30D": "past 30 days", "90D": "past 90 days", All: "all time" };
 
+const DONE_STATUSES = ["resolved", "completed", "closed"];
+
 interface RawReport {
     id: string;
     status: string;
     ai_severity: number | null;
     reported_at: string;
     resolved_at: string | null;
+    closed_at: string | null;
+    assigned_at: string | null;
+    citizen_id: string;
     category_id: number | null;
     ai_category_name: string | null;
+}
+
+interface Assignment {
+    report_id: string;
+    worker_id: string;
+    assignment_status: string;
+    assignment_priority: string;
+    assigned_at: string | null;
+    completed_at: string | null;
+    rejected_at: string | null;
 }
 
 function filterByPeriod(reports: RawReport[], days: number): RawReport[] {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - days);
     return reports.filter((r) => new Date(r.reported_at) >= cutoff);
+}
+
+function getEndDate(r: RawReport): string | null {
+    return r.resolved_at || r.closed_at || null;
 }
 
 export default function AnalyticsPage() {
@@ -47,7 +66,9 @@ export default function AnalyticsPage() {
     const [error, setError] = useState<string | null>(null);
     const [allReports, setAllReports] = useState<RawReport[]>([]);
     const [catsMap, setCatsMap] = useState<Map<number, string>>(new Map());
+    const [catGroupMap, setCatGroupMap] = useState<Map<number, string>>(new Map());
     const [locMap, setLocMap] = useState<Map<string, { city: string | null; neighbourhood: string | null }>>(new Map());
+    const [assignmentsMap, setAssignmentsMap] = useState<Map<string, Assignment>>(new Map());
     const [citizenDates, setCitizenDates] = useState<string[]>([]);
     const [workers, setWorkers] = useState<WorkerWithProfile[]>([]);
     const [activeTab, setActiveTab] = useState("reports");
@@ -62,7 +83,9 @@ export default function AnalyticsPage() {
             ]);
             setAllReports(data.reports);
             setCatsMap(data.catsMap);
+            setCatGroupMap(data.catGroupMap);
             setLocMap(data.locMap);
+            setAssignmentsMap(data.assignments);
             setCitizenDates(citizens.map((c) => c.created_at));
             setWorkers(workersData);
         } catch (err) {
@@ -76,7 +99,25 @@ export default function AnalyticsPage() {
 
     const reports = useMemo(() => filterByPeriod(allReports, periodDays[selectedPeriod]), [allReports, selectedPeriod]);
 
-    // Volume data — group by date/week/month depending on period
+    // ─── KPI Summary Stats ───
+    const kpiStats = useMemo(() => {
+        const total = reports.length;
+        const done = reports.filter((r) => DONE_STATUSES.includes(r.status)).length;
+        const pending = reports.filter((r) => r.status === "pending").length;
+        const rejected = reports.filter((r) => r.status === "rejected").length;
+        const inProgress = reports.filter((r) => r.status === "in_progress" || r.status === "assigned").length;
+        const resolveRate = total > 0 ? Math.round((done / total) * 100) : 0;
+        const resolved = reports.filter((r) => getEndDate(r));
+        const avgHours = resolved.length > 0
+            ? resolved.reduce((s, r) => s + (new Date(getEndDate(r)!).getTime() - new Date(r.reported_at).getTime()) / (1000 * 60 * 60), 0) / resolved.length
+            : 0;
+        const avgDays = Number((avgHours / 24).toFixed(1));
+        const withSeverity = reports.filter((r) => r.ai_severity != null);
+        const avgSeverity = withSeverity.length > 0 ? Number((withSeverity.reduce((s, r) => s + (r.ai_severity || 0), 0) / withSeverity.length).toFixed(1)) : 0;
+        return { total, done, pending, rejected, inProgress, resolveRate, avgDays, avgSeverity };
+    }, [reports]);
+
+    // Volume data
     const volumeData = useMemo(() => {
         const buckets = new Map<string, { reports: number; resolved: number }>();
         for (const r of reports) {
@@ -86,8 +127,9 @@ export default function AnalyticsPage() {
             buckets.set(d, b);
         }
         for (const r of reports) {
-            if (r.resolved_at) {
-                const d = r.resolved_at.slice(0, 10);
+            const endDate = getEndDate(r);
+            if (endDate) {
+                const d = endDate.slice(0, 10);
                 const b = buckets.get(d) || { reports: 0, resolved: 0 };
                 b.resolved++;
                 buckets.set(d, b);
@@ -105,11 +147,12 @@ export default function AnalyticsPage() {
 
     // Resolution time data
     const resolutionData = useMemo(() => {
-        const resolved = reports.filter((r) => r.resolved_at);
+        const resolved = reports.filter((r) => getEndDate(r));
         const buckets = new Map<string, { totalHours: number; count: number }>();
         for (const r of resolved) {
-            const d = r.resolved_at!.slice(0, 10);
-            const hours = (new Date(r.resolved_at!).getTime() - new Date(r.reported_at).getTime()) / (1000 * 60 * 60);
+            const end = getEndDate(r)!;
+            const d = end.slice(0, 10);
+            const hours = (new Date(end).getTime() - new Date(r.reported_at).getTime()) / (1000 * 60 * 60);
             const b = buckets.get(d) || { totalHours: 0, count: 0 };
             b.totalHours += hours;
             b.count++;
@@ -127,36 +170,41 @@ export default function AnalyticsPage() {
     // Status distribution
     const statusData = useMemo(() => {
         const counts: Record<string, number> = {};
-        for (const r of reports) counts[r.status] = (counts[r.status] || 0) + 1;
+        for (const r of reports) {
+            const label = r.status === "resolved" ? "completed" : r.status;
+            counts[label] = (counts[label] || 0) + 1;
+        }
         const total = reports.length || 1;
-        const colorMap: Record<string, string> = { resolved: "#22c55e", in_progress: "#3b82f6", pending: "#f59e0b", closed: "#6b7280", open: "#60a5fa", assigned: "#8b5cf6", rejected: "#ef4444" };
+        const colorMap: Record<string, string> = { completed: "#22c55e", in_progress: "#3b82f6", pending: "#f59e0b", closed: "#6b7280", open: "#60a5fa", assigned: "#8b5cf6", rejected: "#ef4444" };
         return Object.entries(counts).map(([name, count]) => ({
             name: name.replace("_", " "),
             value: Math.round((count / total) * 100),
+            count,
             color: colorMap[name] || "#6b7280",
         }));
     }, [reports]);
 
-    // Category radar
+    // Category radar — fixed to include completed/closed
     const radarData = useMemo(() => {
         const catCounts: Record<string, { total: number; resolved: number }> = {};
         for (const r of reports) {
             const catName = r.category_id ? (catsMap.get(r.category_id) || "Other") : (r.ai_category_name || "Other");
             const c = catCounts[catName] || { total: 0, resolved: 0 };
             c.total++;
-            if (r.status === "resolved") c.resolved++;
+            if (DONE_STATUSES.includes(r.status)) c.resolved++;
             catCounts[catName] = c;
         }
         return Object.entries(catCounts)
             .sort(([, a], [, b]) => b.total - a.total)
             .slice(0, 6)
             .map(([category, v]) => ({
-                category: category.length > 12 ? category.slice(0, 12) + "…" : category,
+                category: category.length > 14 ? category.slice(0, 14) + "…" : category,
                 score: v.total > 0 ? Math.round((v.resolved / v.total) * 100) : 0,
+                total: v.total,
             }));
     }, [reports, catsMap]);
 
-    // Area performance
+    // Area performance — fixed
     const areaData = useMemo(() => {
         const areas: Record<string, { reports: number; resolved: number; totalHours: number; resolvedCount: number }> = {};
         for (const r of reports) {
@@ -164,10 +212,11 @@ export default function AnalyticsPage() {
             const area = loc?.city || loc?.neighbourhood || "Unknown";
             const a = areas[area] || { reports: 0, resolved: 0, totalHours: 0, resolvedCount: 0 };
             a.reports++;
-            if (r.status === "resolved") {
+            if (DONE_STATUSES.includes(r.status)) {
                 a.resolved++;
-                if (r.resolved_at) {
-                    a.totalHours += (new Date(r.resolved_at).getTime() - new Date(r.reported_at).getTime()) / (1000 * 60 * 60);
+                const end = getEndDate(r);
+                if (end) {
+                    a.totalHours += (new Date(end).getTime() - new Date(r.reported_at).getTime()) / (1000 * 60 * 60);
                     a.resolvedCount++;
                 }
             }
@@ -183,6 +232,109 @@ export default function AnalyticsPage() {
                 avgDays: v.resolvedCount > 0 ? Number((v.totalHours / v.resolvedCount / 24).toFixed(1)) : 0,
             }));
     }, [reports, locMap]);
+
+    // Severity distribution
+    const severityData = useMemo(() => {
+        const counts = [0, 0, 0, 0, 0];
+        for (const r of reports) {
+            if (r.ai_severity && r.ai_severity >= 1 && r.ai_severity <= 5) {
+                counts[r.ai_severity - 1]++;
+            }
+        }
+        const labels = ["Low (1)", "Moderate (2)", "Medium (3)", "High (4)", "Critical (5)"];
+        const colors = ["#22c55e", "#84cc16", "#f59e0b", "#f97316", "#ef4444"];
+        return labels.map((label, i) => ({ name: label, count: counts[i], color: colors[i] }));
+    }, [reports]);
+
+    // Category Group Breakdown
+    const categoryGroupData = useMemo(() => {
+        const groups: Record<string, { total: number; resolved: number }> = {};
+        for (const r of reports) {
+            const group = r.category_id ? (catGroupMap.get(r.category_id) || "Other") : "Other";
+            const g = groups[group] || { total: 0, resolved: 0 };
+            g.total++;
+            if (DONE_STATUSES.includes(r.status)) g.resolved++;
+            groups[group] = g;
+        }
+        return Object.entries(groups)
+            .sort(([, a], [, b]) => b.total - a.total)
+            .map(([group, v]) => ({
+                group: group.length > 18 ? group.slice(0, 18) + "…" : group,
+                total: v.total,
+                resolved: v.resolved,
+                pending: v.total - v.resolved,
+            }));
+    }, [reports, catGroupMap]);
+
+    // Cumulative reports trend
+    const cumulativeData = useMemo(() => {
+        const sorted = [...reports].sort((a, b) => a.reported_at.localeCompare(b.reported_at));
+        const buckets = new Map<string, { cumReports: number; cumResolved: number }>();
+        let cumR = 0, cumD = 0;
+        for (const r of sorted) {
+            const d = r.reported_at.slice(0, 10);
+            cumR++;
+            if (DONE_STATUSES.includes(r.status)) cumD++;
+            buckets.set(d, { cumReports: cumR, cumResolved: cumD });
+        }
+        return Array.from(buckets.entries())
+            .sort(([a], [b]) => a.localeCompare(b))
+            .slice(-14)
+            .map(([date, v]) => ({
+                date: new Date(date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+                cumReports: v.cumReports,
+                cumResolved: v.cumResolved,
+            }));
+    }, [reports]);
+
+    // Hourly heatmap data
+    const hourlyData = useMemo(() => {
+        const hours: number[] = new Array(24).fill(0);
+        for (const r of reports) {
+            const h = new Date(r.reported_at).getHours();
+            hours[h]++;
+        }
+        return hours.map((count, hour) => ({
+            hour: `${hour.toString().padStart(2, "0")}:00`,
+            count,
+        }));
+    }, [reports]);
+
+    // Day of week distribution
+    const dayOfWeekData = useMemo(() => {
+        const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        const counts = new Array(7).fill(0);
+        for (const r of reports) {
+            counts[new Date(r.reported_at).getDay()]++;
+        }
+        return days.map((day, i) => ({ day: day.slice(0, 3), count: counts[i] }));
+    }, [reports]);
+
+    // Priority distribution from assignments
+    const priorityData = useMemo(() => {
+        const counts: Record<string, number> = { low: 0, normal: 0, high: 0, critical: 0 };
+        for (const [, a] of assignmentsMap) {
+            if (a.assignment_priority && counts[a.assignment_priority] !== undefined) {
+                counts[a.assignment_priority]++;
+            }
+        }
+        const colors: Record<string, string> = { low: "#6b7280", normal: "#3b82f6", high: "#f97316", critical: "#ef4444" };
+        return Object.entries(counts)
+            .filter(([, v]) => v > 0)
+            .map(([name, value]) => ({ name: name.charAt(0).toUpperCase() + name.slice(1), value, color: colors[name] }));
+    }, [assignmentsMap]);
+
+    // Top reporters (citizens)
+    const topReportersData = useMemo(() => {
+        const counter: Record<string, number> = {};
+        for (const r of reports) {
+            if (r.citizen_id) counter[r.citizen_id] = (counter[r.citizen_id] || 0) + 1;
+        }
+        return Object.entries(counter)
+            .sort(([, a], [, b]) => b - a)
+            .slice(0, 5)
+            .map(([id, count], rank) => ({ rank: rank + 1, citizenId: id.slice(0, 8) + "…", count }));
+    }, [reports]);
 
     // Citizens growth data — cumulative by month
     const citizenGrowthData = useMemo(() => {
@@ -336,11 +488,87 @@ export default function AnalyticsPage() {
 
                 {/* ─── REPORTS TAB ─── */}
                 <TabsContent value="reports" className="mt-4 space-y-4">
+
+            {/* KPI Cards Row */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <Card className="border-border/50">
+                    <CardContent className="p-5">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <p className="text-xs text-muted-foreground font-medium">Total Reports</p>
+                                <p className="text-2xl font-bold mt-1">{kpiStats.total}</p>
+                            </div>
+                            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                                <BarChart3 className="w-5 h-5 text-primary" />
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-1 mt-2 text-xs text-muted-foreground">
+                            <span>{kpiStats.pending} pending</span>
+                            <span>·</span>
+                            <span>{kpiStats.inProgress} in progress</span>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <Card className="border-border/50">
+                    <CardContent className="p-5">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <p className="text-xs text-muted-foreground font-medium">Resolution Rate</p>
+                                <p className="text-2xl font-bold mt-1">{kpiStats.resolveRate}%</p>
+                            </div>
+                            <div className="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center">
+                                <Target className="w-5 h-5 text-green-500" />
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-1 mt-2">
+                            <div className={`flex items-center gap-0.5 text-xs ${kpiStats.resolveRate >= 50 ? "text-green-500" : "text-destructive"}`}>
+                                {kpiStats.resolveRate >= 50 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                                {kpiStats.done} resolved
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <Card className="border-border/50">
+                    <CardContent className="p-5">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <p className="text-xs text-muted-foreground font-medium">Avg Resolution</p>
+                                <p className="text-2xl font-bold mt-1">{kpiStats.avgDays}d</p>
+                            </div>
+                            <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                                <Clock className="w-5 h-5 text-blue-500" />
+                            </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-2">average time to close</p>
+                    </CardContent>
+                </Card>
+
+                <Card className="border-border/50">
+                    <CardContent className="p-5">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <p className="text-xs text-muted-foreground font-medium">Avg Severity</p>
+                                <p className="text-2xl font-bold mt-1">{kpiStats.avgSeverity}/5</p>
+                            </div>
+                            <div className="w-10 h-10 rounded-lg bg-amber-500/10 flex items-center justify-center">
+                                <Zap className="w-5 h-5 text-amber-500" />
+                            </div>
+                        </div>
+                        <div className="w-full h-1.5 rounded-full bg-muted mt-2 overflow-hidden">
+                            <div className="h-full rounded-full bg-amber-500 transition-all" style={{ width: `${(kpiStats.avgSeverity / 5) * 100}%` }} />
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+
+            {/* Row 1: Volume + Resolution Time */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <Card className="border-border/50">
                     <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-semibold">Report Volume</CardTitle>
-                        <p className="text-xs text-muted-foreground">New reports vs resolved over the {periodLabels[selectedPeriod]}</p>
+                        <p className="text-xs text-muted-foreground">New reports vs completed over the {periodLabels[selectedPeriod]}</p>
                     </CardHeader>
                     <CardContent>
                         <div className="h-70">
@@ -350,8 +578,9 @@ export default function AnalyticsPage() {
                                     <XAxis dataKey="month" fontSize={11} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.4)" />
                                     <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.4)" />
                                     <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+                                    <Legend wrapperStyle={{ fontSize: "11px" }} />
                                     <Bar dataKey="reports" fill="#e88c30" radius={[4, 4, 0, 0]} name="New Reports" />
-                                    <Bar dataKey="resolved" fill="#22c55e" radius={[4, 4, 0, 0]} name="Resolved" />
+                                    <Bar dataKey="resolved" fill="#22c55e" radius={[4, 4, 0, 0]} name="Completed" />
                                 </BarChart>
                             </ResponsiveContainer>
                         </div>
@@ -366,20 +595,26 @@ export default function AnalyticsPage() {
                     <CardContent>
                         <div className="h-70">
                             <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={resolutionData}>
+                                <AreaChart data={resolutionData}>
+                                    <defs>
+                                        <linearGradient id="resGradient" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />
+                                            <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+                                        </linearGradient>
+                                    </defs>
                                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.1)" vertical={false} />
                                     <XAxis dataKey="month" fontSize={11} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.4)" />
                                     <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.4)" domain={[0, "auto"]} tickFormatter={(v) => `${v}d`} />
                                     <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v: number | undefined) => [`${v ?? 0} days`, "Avg Resolution"]} />
-                                    <Line type="monotone" dataKey="days" stroke="#22c55e" strokeWidth={2.5} dot={{ r: 4, fill: "#22c55e" }} activeDot={{ r: 6, strokeWidth: 2, stroke: "#fff" }} />
-                                </LineChart>
+                                    <Area type="monotone" dataKey="days" stroke="#22c55e" strokeWidth={2.5} fill="url(#resGradient)" dot={{ r: 4, fill: "#22c55e" }} activeDot={{ r: 6, strokeWidth: 2, stroke: "#fff" }} />
+                                </AreaChart>
                             </ResponsiveContainer>
                         </div>
                     </CardContent>
                 </Card>
             </div>
 
-            {/* Row 2: Status Pie + Radar + Area Performance */}
+            {/* Row 2: Status + Radar + Area Performance */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 <Card className="border-border/50">
                     <CardHeader className="pb-2">
@@ -418,7 +653,10 @@ export default function AnalyticsPage() {
                                         <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
                                         <span className="text-muted-foreground capitalize">{item.name}</span>
                                     </div>
-                                    <span className="font-medium">{item.value}%</span>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-muted-foreground">{item.count}</span>
+                                        <span className="font-medium">{item.value}%</span>
+                                    </div>
                                 </div>
                             ))}
                         </div>
@@ -428,19 +666,24 @@ export default function AnalyticsPage() {
                 <Card className="border-border/50">
                     <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-semibold">Resolution Efficiency</CardTitle>
-                        <p className="text-xs text-muted-foreground">Performance score by category</p>
+                        <p className="text-xs text-muted-foreground">Completion rate by category (%)</p>
                     </CardHeader>
                     <CardContent>
+                        {radarData.length > 0 ? (
                         <div className="h-70">
                             <ResponsiveContainer width="100%" height="100%">
-                                <RadarChart data={radarData}>
+                                <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="70%">
                                     <PolarGrid stroke="rgba(128,128,128,0.15)" />
                                     <PolarAngleAxis dataKey="category" fontSize={10} stroke="rgba(128,128,128,0.5)" />
-                                    <PolarRadiusAxis fontSize={9} stroke="rgba(128,128,128,0.3)" domain={[0, 100]} />
-                                    <Radar name="score" dataKey="score" stroke="#e88c30" fill="#e88c30" fillOpacity={0.2} strokeWidth={2} />
+                                    <PolarRadiusAxis fontSize={9} stroke="rgba(128,128,128,0.3)" domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                                    <Radar name="Completion %" dataKey="score" stroke="#e88c30" fill="#e88c30" fillOpacity={0.25} strokeWidth={2} />
+                                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v: number | undefined) => [`${v ?? 0}%`, "Completion Rate"]} />
                                 </RadarChart>
                             </ResponsiveContainer>
                         </div>
+                        ) : (
+                            <div className="h-70 flex items-center justify-center text-muted-foreground text-xs">No category data available</div>
+                        )}
                     </CardContent>
                 </Card>
 
@@ -459,7 +702,7 @@ export default function AnalyticsPage() {
                                             <span className="font-medium">{area.area}</span>
                                             <span className="text-muted-foreground">{resolveRate}% resolved · {area.avgDays}d avg</span>
                                         </div>
-                                        <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
+                                        <div className="w-full h-2.5 rounded-full bg-muted overflow-hidden">
                                             <div className="h-full rounded-full bg-linear-to-r from-primary to-primary/70 transition-all duration-500" style={{ width: `${resolveRate}%` }} />
                                         </div>
                                         <div className="flex items-center justify-between text-[10px] text-muted-foreground">
@@ -476,6 +719,195 @@ export default function AnalyticsPage() {
                     </CardContent>
                 </Card>
             </div>
+
+            {/* Row 3: Category Groups + Severity Distribution */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <Card className="border-border/50">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-semibold">Reports by Category Group</CardTitle>
+                        <p className="text-xs text-muted-foreground">Volume breakdown by infrastructure type</p>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="h-72">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={categoryGroupData} layout="vertical" barGap={2}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.1)" horizontal={false} />
+                                    <XAxis type="number" fontSize={11} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.4)" />
+                                    <YAxis type="category" dataKey="group" fontSize={10} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.4)" width={110} />
+                                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+                                    <Legend wrapperStyle={{ fontSize: "11px" }} />
+                                    <Bar dataKey="resolved" stackId="a" fill="#22c55e" radius={[0, 0, 0, 0]} name="Resolved" />
+                                    <Bar dataKey="pending" stackId="a" fill="#f59e0b" radius={[0, 4, 4, 0]} name="Pending" />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <Card className="border-border/50">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-semibold">Severity Distribution</CardTitle>
+                        <p className="text-xs text-muted-foreground">AI-assessed severity levels</p>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="h-72">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={severityData} barGap={2}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.1)" vertical={false} />
+                                    <XAxis dataKey="name" fontSize={10} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.4)" />
+                                    <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.4)" />
+                                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+                                    <Bar dataKey="count" name="Reports" radius={[4, 4, 0, 0]}>
+                                        {severityData.map((entry, index) => (
+                                            <Cell key={`sev-${index}`} fill={entry.color} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+
+            {/* Row 4: Cumulative + Hourly/Day Patterns */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <Card className="border-border/50">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-semibold">Cumulative Progress</CardTitle>
+                        <p className="text-xs text-muted-foreground">Total reports vs completed over time</p>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="h-70">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart data={cumulativeData}>
+                                    <defs>
+                                        <linearGradient id="cumReportGrad" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#e88c30" stopOpacity={0.2} />
+                                            <stop offset="95%" stopColor="#e88c30" stopOpacity={0} />
+                                        </linearGradient>
+                                        <linearGradient id="cumResolvedGrad" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#22c55e" stopOpacity={0.2} />
+                                            <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+                                        </linearGradient>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.1)" vertical={false} />
+                                    <XAxis dataKey="date" fontSize={11} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.4)" />
+                                    <YAxis fontSize={11} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.4)" />
+                                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+                                    <Legend wrapperStyle={{ fontSize: "11px" }} />
+                                    <Area type="monotone" dataKey="cumReports" stroke="#e88c30" strokeWidth={2} fill="url(#cumReportGrad)" name="Total Reports" />
+                                    <Area type="monotone" dataKey="cumResolved" stroke="#22c55e" strokeWidth={2} fill="url(#cumResolvedGrad)" name="Total Completed" />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <Card className="border-border/50">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-semibold">Reporting Patterns</CardTitle>
+                        <p className="text-xs text-muted-foreground">When citizens report issues</p>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <div>
+                            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mb-2">By Hour of Day</p>
+                            <div className="h-28">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={hourlyData}>
+                                        <XAxis dataKey="hour" fontSize={8} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.3)" interval={2} />
+                                        <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v: number | undefined) => [`${v ?? 0} reports`, "Count"]} />
+                                        <Bar dataKey="count" fill="#8b5cf6" radius={[2, 2, 0, 0]} />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+                        <div>
+                            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mb-2">By Day of Week</p>
+                            <div className="h-28">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={dayOfWeekData}>
+                                        <XAxis dataKey="day" fontSize={10} tickLine={false} axisLine={false} stroke="rgba(128,128,128,0.3)" />
+                                        <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v: number | undefined) => [`${v ?? 0} reports`, "Count"]} />
+                                        <Bar dataKey="count" fill="#3b82f6" radius={[3, 3, 0, 0]} />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+
+            {/* Row 5: Priority + Top Reporters */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Card className="border-border/50">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-semibold">Assignment Priority</CardTitle>
+                        <p className="text-xs text-muted-foreground">How tasks are prioritized</p>
+                    </CardHeader>
+                    <CardContent>
+                        {priorityData.length > 0 ? (
+                        <>
+                        <div className="h-48">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                    <Pie data={priorityData} cx="50%" cy="50%" innerRadius={40} outerRadius={70} paddingAngle={4} dataKey="value" strokeWidth={0}>
+                                        {priorityData.map((entry, index) => (
+                                            <Cell key={`pri-${index}`} fill={entry.color} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v: number | undefined, name?: string) => [`${v ?? 0} tasks`, name ?? ""]} cursor={false} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        </div>
+                        <div className="space-y-2">
+                            {priorityData.map((item) => (
+                                <div key={item.name} className="flex items-center justify-between text-xs">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                                        <span className="text-muted-foreground">{item.name}</span>
+                                    </div>
+                                    <span className="font-medium">{item.value}</span>
+                                </div>
+                            ))}
+                        </div>
+                        </>
+                        ) : (
+                            <div className="h-48 flex items-center justify-center text-muted-foreground text-xs">No assignment data available</div>
+                        )}
+                    </CardContent>
+                </Card>
+
+                <Card className="border-border/50">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-semibold">Top Reporters</CardTitle>
+                        <p className="text-xs text-muted-foreground">Most active citizens by report count</p>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="space-y-3 mt-2">
+                            {topReportersData.map((reporter) => (
+                                <div key={reporter.citizenId} className="flex items-center gap-3">
+                                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-bold text-primary">
+                                        #{reporter.rank}
+                                    </div>
+                                    <div className="flex-1">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-xs font-mono text-muted-foreground">{reporter.citizenId}</span>
+                                            <Badge variant="secondary" className="text-[10px]">{reporter.count} reports</Badge>
+                                        </div>
+                                        <div className="w-full h-1.5 rounded-full bg-muted mt-1.5 overflow-hidden">
+                                            <div className="h-full rounded-full bg-primary/60 transition-all" style={{ width: `${topReportersData.length > 0 ? (reporter.count / topReportersData[0].count) * 100 : 0}%` }} />
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                            {topReportersData.length === 0 && (
+                                <p className="text-xs text-muted-foreground text-center py-4">No report data available</p>
+                            )}
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+
                 </TabsContent>
 
                 {/* ─── CITIZENS TAB ─── */}

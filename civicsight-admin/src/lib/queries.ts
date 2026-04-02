@@ -103,10 +103,12 @@ export async function fetchDashboardStats() {
 
 export async function fetchAnalyticsData() {
   const data = await apiFetch<{
-    reports: Array<{ id: string; status: string; ai_severity: number | null; reported_at: string; resolved_at: string | null; category_id: number | null; ai_category_name: string | null }>;
+    reports: Array<{ id: string; status: string; ai_severity: number | null; reported_at: string; resolved_at: string | null; closed_at: string | null; assigned_at: string | null; category_id: number | null; ai_category_name: string | null; citizen_id: string }>;
     categories: Array<{ id: number; name: string; category_group: string }>;
     catsMap: Record<string, string>;
+    catGroupMap: Record<string, string>;
     locMap: Record<string, { report_id: string; city: string | null; neighbourhood: string | null }>;
+    assignments: Record<string, { report_id: string; worker_id: string; assignment_status: string; assignment_priority: string; assigned_at: string | null; completed_at: string | null; rejected_at: string | null }>;
   }>("/api/analytics");
 
   // Convert plain objects back to Maps for frontend compatibility
@@ -114,7 +116,9 @@ export async function fetchAnalyticsData() {
     reports: data.reports,
     categories: data.categories,
     catsMap: new Map(Object.entries(data.catsMap).map(([k, v]) => [Number(k), v])),
+    catGroupMap: new Map(Object.entries(data.catGroupMap || {}).map(([k, v]) => [Number(k), v])),
     locMap: new Map(Object.entries(data.locMap)),
+    assignments: new Map(Object.entries(data.assignments || {})),
   };
 }
 
