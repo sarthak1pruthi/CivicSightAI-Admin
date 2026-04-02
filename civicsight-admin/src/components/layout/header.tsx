@@ -387,7 +387,15 @@ export function Header() {
                                                 n.id === notif.id ? { ...n, read: true } : n
                                             )
                                         );
-                                        router.push("/dashboard/reports");
+                                        if (notif.id === "today-high") {
+                                            router.push("/dashboard/reports?severity=high");
+                                        } else if (notif.id === "today-pending") {
+                                            router.push("/dashboard/reports?status=pending");
+                                        } else if (notif.id === "today-resolved") {
+                                            router.push("/dashboard/reports?status=resolved");
+                                        } else {
+                                            router.push("/dashboard/reports");
+                                        }
                                     }}
                                 >
                                     {/* Unread dot indicator */}

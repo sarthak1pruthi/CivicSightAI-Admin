@@ -7,6 +7,8 @@ import {
     MoreHorizontal,
     Eye,
     ChevronDown,
+    ChevronLeft,
+    ChevronRight,
     CircleDot,
     ArrowUpDown,
     Download,
@@ -92,6 +94,7 @@ const statusColors: Record<string, string> = {
     assigned: "bg-blue-500/10 text-blue-500 border-blue-500/20",
     in_progress: "bg-info/10 text-info border-info/20",
     resolved: "bg-success/10 text-success border-success/20",
+    completed: "bg-success/10 text-success border-success/20",
     closed: "bg-muted text-muted-foreground border-border",
     rejected: "bg-destructive/10 text-destructive border-destructive/20",
 };
@@ -188,7 +191,7 @@ function timeAgo(dateStr: string): string {
     return `${days}d ago`;
 }
 
-const ITEMS_PER_PAGE = 6;
+const ITEMS_PER_PAGE = 25;
 
 export default function ReportsPage() {
     const searchParams = useSearchParams();
@@ -216,6 +219,8 @@ export default function ReportsPage() {
     const [rejectNote, setRejectNote] = useState("");
     const [rejecting, setRejecting] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [sortField, setSortField] = useState<"report_number" | "severity" | "reported_at">("reported_at");
+    const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
     // Image lightbox state
     const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
@@ -287,11 +292,21 @@ export default function ReportsPage() {
         loadData();
     }, [loadData]);
 
+    // Apply filters from notification query params
+    useEffect(() => {
+        const statusParam = searchParams.get("status");
+        const severityParam = searchParams.get("severity");
+        if (statusParam) setStatusFilter(statusParam);
+        if (severityParam) setSeverityFilter(severityParam);
+    }, [searchParams]);
+
     // Filter logic
     const filteredReports = reports.filter((r) => {
         if (workerFilter && r.assigned_worker_id !== workerFilter && r.assignment?.worker_id !== workerFilter) return false;
         if (citizenFilter && r.citizen_id !== citizenFilter) return false;
-        if (statusFilter !== "all" && r.status !== statusFilter) return false;
+        if (statusFilter !== "all" && statusFilter === "completed"
+            ? (r.status !== "resolved" && r.status !== "completed")
+            : (statusFilter !== "all" && r.status !== statusFilter)) return false;
         if (categoryFilter !== "all" && r.category?.category_group !== categoryFilter) return false;
         if (severityFilter !== "all" && getSeverityLabel(r.ai_severity).toLowerCase() !== severityFilter) return false;
         if (searchQuery) {
@@ -305,9 +320,22 @@ export default function ReportsPage() {
         return true;
     });
 
+    // Sort
+    const sortedReports = [...filteredReports].sort((a, b) => {
+        let cmp = 0;
+        if (sortField === "report_number") {
+            cmp = (a.report_number ?? 0) - (b.report_number ?? 0);
+        } else if (sortField === "severity") {
+            cmp = (a.ai_severity ?? 0) - (b.ai_severity ?? 0);
+        } else {
+            cmp = new Date(a.reported_at).getTime() - new Date(b.reported_at).getTime();
+        }
+        return sortDir === "asc" ? cmp : -cmp;
+    });
+
     // Pagination
-    const totalPages = Math.max(1, Math.ceil(filteredReports.length / ITEMS_PER_PAGE));
-    const paginatedReports = filteredReports.slice(
+    const totalPages = Math.max(1, Math.ceil(sortedReports.length / ITEMS_PER_PAGE));
+    const paginatedReports = sortedReports.slice(
         (currentPage - 1) * ITEMS_PER_PAGE,
         currentPage * ITEMS_PER_PAGE
     );
@@ -331,7 +359,7 @@ export default function ReportsPage() {
         open: baseReports.filter((r) => r.status === "open").length,
         assigned: baseReports.filter((r) => r.status === "assigned").length,
         in_progress: baseReports.filter((r) => r.status === "in_progress").length,
-        resolved: baseReports.filter((r) => r.status === "resolved").length,
+        completed: baseReports.filter((r) => r.status === "resolved" || r.status === "completed").length,
         closed: baseReports.filter((r) => r.status === "closed").length,
         rejected: baseReports.filter((r) => r.status === "rejected").length,
     };
@@ -346,15 +374,22 @@ export default function ReportsPage() {
     };
 
     const toggleSelectAll = () => {
-        if (selectedIds.size === paginatedReports.length) {
+        if (selectedIds.size === paginatedReports.filter((r) => r.status !== "closed").length) {
             setSelectedIds(new Set());
         } else {
-            setSelectedIds(new Set(paginatedReports.map((r) => r.id)));
+            setSelectedIds(new Set(paginatedReports.filter((r) => r.status !== "closed").map((r) => r.id)));
         }
     };
 
     const handleBulkStatus = async (newStatus: ReportStatus) => {
-        const ids = [...selectedIds];
+        const ids = [...selectedIds].filter((id) => {
+            const r = reports.find((rep) => rep.id === id);
+            return r?.status !== "closed";
+        });
+        if (ids.length === 0) {
+            toast.error("No eligible reports — closed reports cannot be modified.");
+            return;
+        }
         try {
             await Promise.all(ids.map((id) => updateReportStatusDb(id, newStatus)));
             setReports((prev) =>
@@ -370,6 +405,7 @@ export default function ReportsPage() {
     // Update report status
     const handleUpdateStatus = async (reportId: string, newStatus: ReportStatus, rejectionNote?: string) => {
         const report = reports.find((r) => r.id === reportId);
+        if (report?.status === "closed") return;
         try {
             await updateReportStatusDb(reportId, newStatus, rejectionNote);
             setReports((prev) =>
@@ -655,9 +691,12 @@ export default function ReportsPage() {
                                     </button>
                                 </TableHead>
                                 <TableHead className="text-xs font-medium text-muted-foreground h-10">
-                                    <div className="flex items-center gap-1 cursor-pointer hover:text-foreground transition-colors">
-                                        Report ID <ArrowUpDown className="w-3 h-3" />
-                                    </div>
+                                    <button
+                                        className="flex items-center gap-1 hover:text-foreground transition-colors"
+                                        onClick={() => { setSortField("report_number"); setSortDir(prev => sortField === "report_number" ? (prev === "asc" ? "desc" : "asc") : "desc"); setCurrentPage(1); }}
+                                    >
+                                        Report ID <ArrowUpDown className={`w-3 h-3 ${sortField === "report_number" ? "text-primary" : ""}`} />
+                                    </button>
                                 </TableHead>
                                 <TableHead className="text-xs font-medium text-muted-foreground h-10">
                                     Title
@@ -666,7 +705,12 @@ export default function ReportsPage() {
                                     Category
                                 </TableHead>
                                 <TableHead className="text-xs font-medium text-muted-foreground h-10">
-                                    Severity
+                                    <button
+                                        className="flex items-center gap-1 hover:text-foreground transition-colors"
+                                        onClick={() => { setSortField("severity"); setSortDir(prev => sortField === "severity" ? (prev === "asc" ? "desc" : "asc") : "desc"); setCurrentPage(1); }}
+                                    >
+                                        Severity <ArrowUpDown className={`w-3 h-3 ${sortField === "severity" ? "text-primary" : ""}`} />
+                                    </button>
                                 </TableHead>
                                 <TableHead className="text-xs font-medium text-muted-foreground h-10">
                                     Priority
@@ -678,9 +722,12 @@ export default function ReportsPage() {
                                     Confidence
                                 </TableHead>
                                 <TableHead className="text-xs font-medium text-muted-foreground h-10">
-                                    <div className="flex items-center gap-1 cursor-pointer hover:text-foreground transition-colors">
-                                        Reported <ArrowUpDown className="w-3 h-3" />
-                                    </div>
+                                    <button
+                                        className="flex items-center gap-1 hover:text-foreground transition-colors"
+                                        onClick={() => { setSortField("reported_at"); setSortDir(prev => sortField === "reported_at" ? (prev === "asc" ? "desc" : "asc") : "desc"); setCurrentPage(1); }}
+                                    >
+                                        Reported <ArrowUpDown className={`w-3 h-3 ${sortField === "reported_at" ? "text-primary" : ""}`} />
+                                    </button>
                                 </TableHead>
                                 <TableHead className="text-xs font-medium text-muted-foreground h-10 pr-6 w-10">
                                     {" "}
@@ -713,9 +760,13 @@ export default function ReportsPage() {
                                     onClick={() => openDetail(report)}
                                 >
                                     <TableCell className="pl-4" onClick={(e) => e.stopPropagation()}>
+                                        {report.status !== "closed" ? (
                                         <button onClick={() => toggleSelect(report.id)} className="text-muted-foreground hover:text-foreground transition-colors">
                                             {selectedIds.has(report.id) ? <CheckSquare className="w-4 h-4 text-primary" /> : <Square className="w-4 h-4" />}
                                         </button>
+                                        ) : (
+                                        <Square className="w-4 h-4 text-muted-foreground/30" />
+                                        )}
                                     </TableCell>
                                     <TableCell className="text-xs font-mono font-medium text-primary">
                                         RPT-{report.report_number}
@@ -801,7 +852,7 @@ export default function ReportsPage() {
                                                     <Eye className="w-3.5 h-3.5 mr-2" />
                                                     View Details
                                                 </DropdownMenuItem>
-                                                {report.status !== "rejected" && (
+                                                {report.status !== "closed" && (
                                                     <DropdownMenuItem
                                                         onClick={(e) => {
                                                             e.stopPropagation();
@@ -812,6 +863,8 @@ export default function ReportsPage() {
                                                         Assign Worker
                                                     </DropdownMenuItem>
                                                 )}
+                                                {report.status !== "closed" && (
+                                                <>
                                                 <DropdownMenuSeparator />
                                                 <DropdownMenuItem
                                                     onClick={(e) => {
@@ -846,7 +899,8 @@ export default function ReportsPage() {
                                                 >
                                                     <XCircle className="w-3.5 h-3.5 mr-2" />
                                                     Reject Report
-                                                </DropdownMenuItem>                                            </DropdownMenuContent>
+                                                </DropdownMenuItem>
+                                                </>)}                                            </DropdownMenuContent>
                                         </DropdownMenu>
                                     </TableCell>
                                 </TableRow>
@@ -855,45 +909,44 @@ export default function ReportsPage() {
                     </Table>
 
                     {/* Pagination */}
-                    <div className="flex items-center justify-between px-6 py-3 border-t border-border/50">
-                        <p className="text-xs text-muted-foreground">
-                            Showing {Math.min((currentPage - 1) * ITEMS_PER_PAGE + 1, filteredReports.length)}–{Math.min(currentPage * ITEMS_PER_PAGE, filteredReports.length)} of {filteredReports.length} reports
-                        </p>
-                        <div className="flex items-center gap-1">
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-7 text-xs"
-                                disabled={currentPage <= 1}
-                                onClick={() => setCurrentPage((p) => p - 1)}
-                            >
-                                Previous
-                            </Button>
-                            {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                    {filteredReports.length > ITEMS_PER_PAGE && (
+                        <div className="flex items-center justify-between px-6 py-3 border-t border-border/50">
+                            <p className="text-xs text-muted-foreground">
+                                Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1}–{Math.min(currentPage * ITEMS_PER_PAGE, filteredReports.length)} of {filteredReports.length}
+                            </p>
+                            <div className="flex items-center gap-1">
                                 <Button
-                                    key={page}
                                     variant="outline"
-                                    size="sm"
-                                    className={`h-7 w-7 text-xs ${currentPage === page
-                                            ? "bg-primary text-primary-foreground border-primary"
-                                            : ""
-                                        }`}
-                                    onClick={() => setCurrentPage(page)}
+                                    size="icon"
+                                    className="w-8 h-8"
+                                    disabled={currentPage === 1}
+                                    onClick={() => setCurrentPage((p) => p - 1)}
                                 >
-                                    {page}
+                                    <ChevronLeft className="w-4 h-4" />
                                 </Button>
-                            ))}
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-7 text-xs"
-                                disabled={currentPage >= totalPages}
-                                onClick={() => setCurrentPage((p) => p + 1)}
-                            >
-                                Next
-                            </Button>
+                                {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                                    <Button
+                                        key={page}
+                                        variant={page === currentPage ? "default" : "outline"}
+                                        size="icon"
+                                        className="w-8 h-8 text-xs"
+                                        onClick={() => setCurrentPage(page)}
+                                    >
+                                        {page}
+                                    </Button>
+                                ))}
+                                <Button
+                                    variant="outline"
+                                    size="icon"
+                                    className="w-8 h-8"
+                                    disabled={currentPage === totalPages}
+                                    onClick={() => setCurrentPage((p) => p + 1)}
+                                >
+                                    <ChevronRight className="w-4 h-4" />
+                                </Button>
+                            </div>
                         </div>
-                    </div>
+                    )}
                 </CardContent>
             </Card>
 
@@ -1119,8 +1172,9 @@ export default function ReportsPage() {
                                         <Select
                                             value={detailStatus}
                                             onValueChange={(v) => setDetailStatus(v)}
+                                            disabled={selectedReport.status === "closed"}
                                         >
-                                            <SelectTrigger className="w-40 h-9 text-xs">
+                                            <SelectTrigger className={`w-40 h-9 text-xs ${selectedReport.status === "closed" ? "opacity-50 cursor-not-allowed" : ""}`}>
                                                 <SelectValue placeholder="Update Status" />
                                             </SelectTrigger>
                                             <SelectContent>
@@ -1134,8 +1188,8 @@ export default function ReportsPage() {
                                         <Button
                                             variant="outline"
                                             size="sm"
-                                            className="text-xs h-9 gap-1.5"
-                                            disabled={selectedReport.status === "rejected"}
+                                            className={`text-xs h-9 gap-1.5 ${selectedReport.status === "closed" ? "opacity-50 cursor-not-allowed" : ""}`}
+                                            disabled={selectedReport.status === "closed"}
                                             onClick={() => {
                                                 setAssignDialog(selectedReport);
                                             }}
@@ -1145,7 +1199,8 @@ export default function ReportsPage() {
                                         </Button>
                                         <Button
                                             size="sm"
-                                            className="text-xs h-9 ml-auto"
+                                            className={`text-xs h-9 ml-auto ${selectedReport.status === "closed" ? "opacity-50 cursor-not-allowed" : ""}`}
+                                            disabled={selectedReport.status === "closed"}
                                             onClick={handleSaveChanges}
                                         >
                                             Save Changes

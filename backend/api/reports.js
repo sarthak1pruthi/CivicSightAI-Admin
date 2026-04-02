@@ -5,13 +5,13 @@ module.exports = cors(async function handler(req, res) {
   const supabase = getSupabase();
 
   if (req.method === "GET") {
-    // ?count=pending — return count of unresolved reports
+    // ?count=pending — return count of actionable reports
     if (req.query.count === "pending") {
       try {
         const { count, error } = await supabase
           .from("reports")
           .select("*", { count: "exact", head: true })
-          .not("status", "in", '("resolved","closed")');
+          .in("status", ["pending", "assigned", "in_progress"]);
 
         if (error) return res.status(500).json({ error: error.message });
         return res.json({ count: count || 0 });

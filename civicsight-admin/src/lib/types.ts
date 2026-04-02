@@ -10,6 +10,7 @@ export type ReportStatus =
   | "assigned"
   | "in_progress"
   | "resolved"
+  | "completed"
   | "closed"
   | "rejected";
 
