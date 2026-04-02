@@ -1044,7 +1044,7 @@ export default function ReportsPage() {
                 open={!!selectedReport}
                 onOpenChange={(open) => !open && setSelectedReport(null)}
             >
-                <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+                <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
                     {selectedReport && (
                         <>
                             <DialogHeader>
@@ -1076,8 +1076,65 @@ export default function ReportsPage() {
                                 </DialogDescription>
                             </DialogHeader>
 
-                            <Tabs defaultValue="details" className="mt-2">
-                                <TabsList className="grid w-full grid-cols-4 h-9">
+                            {/* Quick Status Bar — always visible */}
+                            <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/30 border border-border/50">
+                                <span className="text-xs font-medium text-muted-foreground shrink-0">Status:</span>
+                                <Select
+                                    value={detailStatus}
+                                    onValueChange={(v) => setDetailStatus(v)}
+                                    disabled={selectedReport.status === "closed"}
+                                >
+                                    <SelectTrigger className={`w-40 h-8 text-xs ${selectedReport.status === "closed" ? "opacity-50 cursor-not-allowed" : ""}`}>
+                                        <SelectValue placeholder="Update Status" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="pending">Pending</SelectItem>
+                                        <SelectItem value="open">Open</SelectItem>
+                                        <SelectItem value="assigned">Assigned</SelectItem>
+                                        <SelectItem value="in_progress">In Progress</SelectItem>
+                                        <SelectItem value="resolved">Resolved</SelectItem>
+                                        <SelectItem value="completed">Completed</SelectItem>
+                                        <SelectItem value="closed">Closed</SelectItem>
+                                        <SelectItem value="rejected">Rejected</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <Button
+                                    size="sm"
+                                    className="text-xs h-8"
+                                    disabled={selectedReport.status === "closed" || detailStatus === selectedReport.status}
+                                    onClick={handleSaveChanges}
+                                >
+                                    Save Status
+                                </Button>
+                                <Separator orientation="vertical" className="h-5" />
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className={`text-xs h-8 gap-1.5 ${selectedReport.status === "closed" ? "opacity-50 cursor-not-allowed" : ""}`}
+                                    disabled={selectedReport.status === "closed"}
+                                    onClick={() => setAssignDialog(selectedReport)}
+                                >
+                                    <UserPlus className="w-3.5 h-3.5" />
+                                    Assign Worker
+                                </Button>
+                                {selectedReport.status !== "closed" && selectedReport.status !== "rejected" && (
+                                    <Button
+                                        variant="destructive"
+                                        size="sm"
+                                        className="text-xs h-8 gap-1.5 ml-auto"
+                                        onClick={() => setRejectDialog(selectedReport)}
+                                    >
+                                        <XCircle className="w-3.5 h-3.5" />
+                                        Reject
+                                    </Button>
+                                )}
+                            </div>
+
+                            <Tabs defaultValue="images" className="mt-2">
+                                <TabsList className="grid w-full grid-cols-5 h-9">
+                                    <TabsTrigger value="images" className="text-xs">
+                                        Images
+                                    </TabsTrigger>
                                     <TabsTrigger value="details" className="text-xs">
                                         Details
                                     </TabsTrigger>
@@ -1092,39 +1149,121 @@ export default function ReportsPage() {
                                     </TabsTrigger>
                                 </TabsList>
 
-                                <TabsContent value="details" className="space-y-4 mt-4">
-                                    {/* Report Image / Category Icon */}
-                                    <div className="w-full h-48 rounded-lg overflow-hidden bg-muted/30 border border-border/50">
-                                        {selectedReport.images && selectedReport.images.length > 0 ? (
-                                            <img
-                                                src={selectedReport.images[0].image_url}
-                                                alt={`Report #${selectedReport.report_number}`}
-                                                className="w-full h-full object-cover cursor-zoom-in hover:opacity-90 transition-opacity"
-                                                onClick={() => openLightbox(selectedReport.images![0].image_url)}
-                                            />
-                                        ) : (
-                                            <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
-                                                <span className="text-4xl">{getCategoryIcon(selectedReport.category?.name, selectedReport.category?.category_group)}</span>
-                                                <p className="text-xs">{selectedReport.category?.name || selectedReport.ai_category_name || "Uncategorized"}</p>
+                                {/* ── Images Tab ── side-by-side comparison ── */}
+                                <TabsContent value="images" className="space-y-4 mt-4">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        {/* Citizen Report Image */}
+                                        <div className="space-y-2">
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-2 h-2 rounded-full bg-destructive" />
+                                                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                                    Before — Citizen Report
+                                                </h4>
                                             </div>
-                                        )}
+                                            <div className="h-64 rounded-lg overflow-hidden bg-muted/30 border-2 border-destructive/20">
+                                                {selectedReport.images && selectedReport.images.length > 0 ? (
+                                                    <img
+                                                        src={selectedReport.images[0].image_url}
+                                                        alt="Citizen report"
+                                                        className="w-full h-full object-cover cursor-zoom-in hover:opacity-90 transition-opacity"
+                                                        onClick={() => openLightbox(selectedReport.images![0].image_url)}
+                                                    />
+                                                ) : (
+                                                    <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                                                        <ImageIcon className="w-8 h-8 opacity-40" />
+                                                        <p className="text-xs">No image uploaded by citizen</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {/* Additional citizen images */}
+                                            {selectedReport.images && selectedReport.images.length > 1 && (
+                                                <div className="flex gap-2 overflow-x-auto pb-1">
+                                                    {selectedReport.images.map((img, i) => (
+                                                        <img
+                                                            key={img.id}
+                                                            src={img.thumbnail_url || img.image_url}
+                                                            alt={`Report image ${i + 1}`}
+                                                            className="w-14 h-14 rounded-md object-cover cursor-zoom-in border border-border/50 hover:border-primary/50 transition-colors shrink-0"
+                                                            onClick={() => openLightbox(img.image_url)}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            )}
+                                            <p className="text-[11px] text-muted-foreground">
+                                                Uploaded {selectedReport.images?.[0]?.uploaded_at
+                                                    ? new Date(selectedReport.images[0].uploaded_at).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })
+                                                    : new Date(selectedReport.reported_at).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })
+                                                }
+                                            </p>
+                                        </div>
+
+                                        {/* Worker Proof Image */}
+                                        <div className="space-y-2">
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-2 h-2 rounded-full bg-success" />
+                                                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                                    After — Worker Proof
+                                                </h4>
+                                                {selectedReport.assignment?.worker && (
+                                                    <span className="text-[10px] text-muted-foreground ml-auto">
+                                                        by {selectedReport.assignment.worker.full_name}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="h-64 rounded-lg overflow-hidden bg-muted/30 border-2 border-success/20">
+                                                {selectedReport.assignment?.proof_image_url ? (
+                                                    <img
+                                                        src={selectedReport.assignment.proof_image_url}
+                                                        alt="Worker proof"
+                                                        className="w-full h-full object-cover cursor-zoom-in hover:opacity-90 transition-opacity"
+                                                        onClick={() => openLightbox(selectedReport.assignment!.proof_image_url!)}
+                                                    />
+                                                ) : (
+                                                    <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                                                        <ImageIcon className="w-8 h-8 opacity-40" />
+                                                        <p className="text-xs">No proof uploaded yet</p>
+                                                        {selectedReport.assignment?.worker ? (
+                                                            <p className="text-[10px] text-muted-foreground/70">Assigned to {selectedReport.assignment.worker.full_name}</p>
+                                                        ) : (
+                                                            <p className="text-[10px] text-muted-foreground/70">No worker assigned</p>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {selectedReport.assignment?.proof_image_url && selectedReport.assignment?.completed_at && (
+                                                <p className="text-[11px] text-muted-foreground">
+                                                    Completed {new Date(selectedReport.assignment.completed_at).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                                </p>
+                                            )}
+                                        </div>
                                     </div>
 
-                                    {/* Additional images */}
-                                    {selectedReport.images && selectedReport.images.length > 1 && (
-                                        <div className="flex gap-2 overflow-x-auto pb-1">
-                                            {selectedReport.images.map((img, i) => (
-                                                <img
-                                                    key={img.id}
-                                                    src={img.thumbnail_url || img.image_url}
-                                                    alt={`Report image ${i + 1}`}
-                                                    className="w-16 h-16 rounded-md object-cover cursor-zoom-in border border-border/50 hover:border-primary/50 transition-colors shrink-0"
-                                                    onClick={() => openLightbox(img.image_url)}
-                                                />
-                                            ))}
+                                    {/* Worker Note */}
+                                    {selectedReport.assignment?.worker_note && (
+                                        <div className="flex items-start gap-2 p-2.5 rounded-lg bg-muted/50 border border-border/50">
+                                            <MessageSquare className="w-3.5 h-3.5 text-muted-foreground mt-0.5" />
+                                            <div>
+                                                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Worker Note</p>
+                                                <p className="text-xs mt-0.5">{selectedReport.assignment.worker_note}</p>
+                                            </div>
                                         </div>
                                     )}
 
+                                    {/* Verdict hint for admin */}
+                                    {selectedReport.assignment?.proof_image_url && selectedReport.images && selectedReport.images.length > 0 && (
+                                        <div className="flex items-center gap-3 p-3 rounded-lg bg-primary/5 border border-primary/20">
+                                            <span className="text-lg">🔍</span>
+                                            <div>
+                                                <p className="text-xs font-medium">Review Comparison</p>
+                                                <p className="text-[11px] text-muted-foreground">
+                                                    Compare the before &amp; after images above, then update the status using the controls at the top.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    )}
+                                </TabsContent>
+
+                                <TabsContent value="details" className="space-y-4 mt-4">
                                     {/* Description */}
                                     <div>
                                         <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
@@ -1246,49 +1385,6 @@ export default function ReportsPage() {
                                         </div>
                                     )}
 
-                                    {/* Proof Image Comparison */}
-                                    {selectedReport.assignment?.proof_image_url && (
-                                        <div className="space-y-2">
-                                            <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                                                Work Proof Comparison
-                                            </h4>
-                                            <div className="grid grid-cols-2 gap-3">
-                                                <div className="space-y-1.5">
-                                                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                                                        Before (Citizen Report)
-                                                    </p>
-                                                    <div className="h-40 rounded-lg overflow-hidden bg-muted/30 border border-border/50">
-                                                        {selectedReport.images?.[0] ? (
-                                                            <img
-                                                                src={selectedReport.images[0].image_url}
-                                                                alt="Citizen report"
-                                                                className="w-full h-full object-cover cursor-zoom-in hover:opacity-90 transition-opacity"
-                                                                onClick={() => openLightbox(selectedReport.images![0].image_url)}
-                                                            />
-                                                        ) : (
-                                                            <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                                                                <ImageIcon className="w-6 h-6" />
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                                <div className="space-y-1.5">
-                                                    <p className="text-[10px] font-medium uppercase tracking-wider text-success">
-                                                        After (Worker Proof)
-                                                    </p>
-                                                    <div className="h-40 rounded-lg overflow-hidden bg-success/5 border border-success/20">
-                                                        <img
-                                                            src={selectedReport.assignment.proof_image_url}
-                                                            alt="Worker proof"
-                                                            className="w-full h-full object-cover cursor-zoom-in hover:opacity-90 transition-opacity"
-                                                            onClick={() => openLightbox(selectedReport.assignment!.proof_image_url!)}
-                                                        />
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
-
                                     {/* Rejection info */}
                                     {selectedReport.status === "rejected" && (
                                         <div className="flex items-start gap-2 p-2.5 rounded-lg bg-destructive/5 border border-destructive/20">
@@ -1302,45 +1398,6 @@ export default function ReportsPage() {
                                         </div>
                                     )}
 
-                                    {/* Actions */}
-                                    <div className="flex items-center gap-2">
-                                        <Select
-                                            value={detailStatus}
-                                            onValueChange={(v) => setDetailStatus(v)}
-                                            disabled={selectedReport.status === "closed"}
-                                        >
-                                            <SelectTrigger className={`w-40 h-9 text-xs ${selectedReport.status === "closed" ? "opacity-50 cursor-not-allowed" : ""}`}>
-                                                <SelectValue placeholder="Update Status" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="pending">Pending</SelectItem>
-                                                <SelectItem value="in_progress">In Progress</SelectItem>
-                                                <SelectItem value="resolved">Resolved</SelectItem>
-                                                <SelectItem value="closed">Closed</SelectItem>
-                                                <SelectItem value="rejected">Rejected</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            className={`text-xs h-9 gap-1.5 ${selectedReport.status === "closed" ? "opacity-50 cursor-not-allowed" : ""}`}
-                                            disabled={selectedReport.status === "closed"}
-                                            onClick={() => {
-                                                setAssignDialog(selectedReport);
-                                            }}
-                                        >
-                                            <UserPlus className="w-3.5 h-3.5" />
-                                            Assign Worker
-                                        </Button>
-                                        <Button
-                                            size="sm"
-                                            className={`text-xs h-9 ml-auto ${selectedReport.status === "closed" ? "opacity-50 cursor-not-allowed" : ""}`}
-                                            disabled={selectedReport.status === "closed"}
-                                            onClick={handleSaveChanges}
-                                        >
-                                            Save Changes
-                                        </Button>
-                                    </div>
                                 </TabsContent>
 
                                 <TabsContent value="ai" className="space-y-4 mt-4">
