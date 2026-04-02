@@ -308,6 +308,69 @@ export default function UsersPage() {
             u.email.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
+    const handleExportWorkersPDF = async () => {
+        const { default: jsPDF } = await import("jspdf");
+        const autoTable = (await import("jspdf-autotable")).default;
+        const doc = new jsPDF({ orientation: "landscape" });
+
+        doc.setFontSize(18);
+        doc.setTextColor(40, 40, 40);
+        doc.text("CivicSight AI - Workers", 14, 20);
+
+        doc.setFontSize(10);
+        doc.setTextColor(120, 120, 120);
+        doc.text(
+            `Generated on ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}  |  ${filteredWorkers.length} workers`,
+            14, 28
+        );
+
+        autoTable(doc, {
+            startY: 34,
+            head: [["Name", "Email", "Service Area", "Completed", "Rejected", "Rating", "Current Tasks", "Available", "Status"]],
+            body: filteredWorkers.map((w) => [
+                w.full_name || "Unnamed",
+                w.email,
+                w.worker_profile?.service_area || "Unassigned",
+                String(w.worker_profile?.total_completed || 0),
+                String(w.worker_profile?.total_rejected || 0),
+                String(w.worker_profile?.avg_rating?.toFixed(1) || "0"),
+                String(w.worker_profile?.current_task_count || 0),
+                w.worker_profile?.is_available ? "Yes" : "No",
+                w.status,
+            ]),
+            styles: { fontSize: 8, cellPadding: 3 },
+            headStyles: { fillColor: [30, 30, 40], textColor: [255, 255, 255], fontStyle: "bold" },
+            alternateRowStyles: { fillColor: [245, 245, 250] },
+        });
+
+        doc.save(`civicsight-workers-${new Date().toISOString().slice(0, 10)}.pdf`);
+    };
+
+    const handleExportWorkersCSV = () => {
+        const headers = ["Name", "Email", "Service Area", "Completed", "Rejected", "Rating", "Current Tasks", "Available", "Status", "Joined", "Last Active"];
+        const rows = filteredWorkers.map((w) => [
+            w.full_name || "Unnamed",
+            w.email,
+            w.worker_profile?.service_area || "Unassigned",
+            String(w.worker_profile?.total_completed || 0),
+            String(w.worker_profile?.total_rejected || 0),
+            String(w.worker_profile?.avg_rating?.toFixed(1) || "0"),
+            String(w.worker_profile?.current_task_count || 0),
+            w.worker_profile?.is_available ? "Yes" : "No",
+            w.status,
+            new Date(w.created_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }),
+            w.last_login_at ? new Date(w.last_login_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "Never",
+        ]);
+        const csv = [headers, ...rows].map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
+        const blob = new Blob([csv], { type: "text/csv" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `civicsight-workers-${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
     if (loading) {
         return (
             <div className="flex items-center justify-center h-[60vh]">
@@ -572,6 +635,28 @@ export default function UsersPage() {
                 </TabsContent>
 
                 <TabsContent value="workers" className="mt-4 space-y-4">
+                    <Card className="border-border/50">
+                        <CardContent className="p-4">
+                            <div className="flex items-center justify-between">
+                                <p className="text-xs text-muted-foreground">{filteredWorkers.length} workers</p>
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <Button variant="outline" size="sm" className="h-9 text-xs gap-1.5">
+                                            <Download className="w-3.5 h-3.5" /> Export
+                                        </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                        <DropdownMenuItem onClick={handleExportWorkersPDF}>
+                                            <FileText className="w-3.5 h-3.5 mr-2" /> Export as PDF
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem onClick={handleExportWorkersCSV}>
+                                            <Download className="w-3.5 h-3.5 mr-2" /> Export as CSV
+                                        </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
+                            </div>
+                        </CardContent>
+                    </Card>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {filteredWorkers.map((worker) => (
                             <Card
