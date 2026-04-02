@@ -485,53 +485,49 @@ export default function AnalyticsPage() {
                 console.error("PDF Export: contentRef is null");
                 return;
             }
-            const html2canvasModule = await import("html2canvas");
-            const html2canvas: (element: HTMLElement, options?: Record<string, unknown>) => Promise<HTMLCanvasElement> =
-                typeof html2canvasModule === "function" ? html2canvasModule : (html2canvasModule as any).default;
-            if (typeof html2canvas !== "function") {
-                console.error("PDF Export: html2canvas is not a function", html2canvasModule);
-                return;
-            }
+            const { toPng } = await import("html-to-image");
             const { default: jsPDF } = await import("jspdf");
             const stamp = new Date().toISOString().slice(0, 10);
 
-        const canvas = await html2canvas(contentRef.current, {
-            scale: 2,
-            useCORS: true,
-            logging: false,
-            backgroundColor: "#ffffff",
-        });
+            const dataUrl = await toPng(contentRef.current, {
+                quality: 1,
+                pixelRatio: 2,
+                backgroundColor: "#ffffff",
+            });
 
-        const imgData = canvas.toDataURL("image/png");
-        const doc = new jsPDF({ orientation: "landscape" });
-        const pageWidth = doc.internal.pageSize.getWidth();
-        const pageHeight = doc.internal.pageSize.getHeight();
-        const margin = 10;
-        const usableWidth = pageWidth - 2 * margin;
-        const usableHeight = pageHeight - 2 * margin;
-        const ratio = usableWidth / canvas.width;
-        const scaledHeight = canvas.height * ratio;
+            const img = new Image();
+            img.src = dataUrl;
+            await new Promise((resolve) => { img.onload = resolve; });
 
-        if (scaledHeight <= usableHeight) {
-            doc.addImage(imgData, "PNG", margin, margin, usableWidth, scaledHeight);
-        } else {
-            const pageCanvasHeight = usableHeight / ratio;
-            let yOffset = 0;
-            let pageNum = 0;
-            while (yOffset < canvas.height) {
-                if (pageNum > 0) doc.addPage();
-                const sliceH = Math.min(pageCanvasHeight, canvas.height - yOffset);
-                const sliceCanvas = document.createElement("canvas");
-                sliceCanvas.width = canvas.width;
-                sliceCanvas.height = sliceH;
-                const ctx = sliceCanvas.getContext("2d");
-                ctx?.drawImage(canvas, 0, yOffset, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
-                doc.addImage(sliceCanvas.toDataURL("image/png"), "PNG", margin, margin, usableWidth, sliceH * ratio);
-                yOffset += pageCanvasHeight;
-                pageNum++;
+            const doc = new jsPDF({ orientation: "landscape" });
+            const pageWidth = doc.internal.pageSize.getWidth();
+            const pageHeight = doc.internal.pageSize.getHeight();
+            const margin = 10;
+            const usableWidth = pageWidth - 2 * margin;
+            const usableHeight = pageHeight - 2 * margin;
+            const ratio = usableWidth / img.width;
+            const scaledHeight = img.height * ratio;
+
+            if (scaledHeight <= usableHeight) {
+                doc.addImage(dataUrl, "PNG", margin, margin, usableWidth, scaledHeight);
+            } else {
+                const pageCanvasHeight = usableHeight / ratio;
+                let yOffset = 0;
+                let pageNum = 0;
+                while (yOffset < img.height) {
+                    if (pageNum > 0) doc.addPage();
+                    const sliceH = Math.min(pageCanvasHeight, img.height - yOffset);
+                    const sliceCanvas = document.createElement("canvas");
+                    sliceCanvas.width = img.width;
+                    sliceCanvas.height = sliceH;
+                    const ctx = sliceCanvas.getContext("2d");
+                    ctx?.drawImage(img, 0, yOffset, img.width, sliceH, 0, 0, img.width, sliceH);
+                    doc.addImage(sliceCanvas.toDataURL("image/png"), "PNG", margin, margin, usableWidth, sliceH * ratio);
+                    yOffset += pageCanvasHeight;
+                    pageNum++;
+                }
             }
-        }
-        doc.save(`civicsight-${activeTab}-analytics-${stamp}.pdf`);
+            doc.save(`civicsight-${activeTab}-analytics-${stamp}.pdf`);
         } catch (err) {
             console.error("PDF Export failed:", err);
             alert("PDF export failed: " + (err instanceof Error ? err.message : String(err)));
