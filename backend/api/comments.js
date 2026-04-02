@@ -1,5 +1,6 @@
 const { getSupabase } = require("../lib/supabase");
 const cors = require("../lib/cors");
+const { sendPushNotification } = require("../lib/fcm");
 
 module.exports = cors(async function handler(req, res) {
   const supabase = getSupabase();
@@ -52,6 +53,40 @@ module.exports = cors(async function handler(req, res) {
         .single();
 
       if (error) return res.status(500).json({ error: error.message });
+
+      // Notify the assigned worker if the comment is from an admin
+      try {
+        const { data: sender } = await supabase
+          .from("users")
+          .select("role, full_name")
+          .eq("uid", user_id)
+          .single();
+
+        if (sender?.role === "admin") {
+          // Find the worker assigned to this report
+          const { data: report } = await supabase
+            .from("reports")
+            .select("assigned_worker_id")
+            .eq("id", report_id)
+            .single();
+
+          if (report?.assigned_worker_id) {
+            sendPushNotification(
+              report.assigned_worker_id,
+              {
+                title: "New Message from Admin",
+                body: content.trim().length > 100
+                  ? content.trim().substring(0, 100) + "..."
+                  : content.trim(),
+              },
+              { type: "new_comment", report_id }
+            );
+          }
+        }
+      } catch (notifErr) {
+        console.error("Notification error (non-blocking):", notifErr.message);
+      }
+
       return res.status(201).json(data);
     } catch (err) {
       return res.status(500).json({ error: err.message });

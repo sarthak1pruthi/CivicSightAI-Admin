@@ -1,5 +1,6 @@
 const { getSupabase } = require("../lib/supabase");
 const cors = require("../lib/cors");
+const { sendPushNotification } = require("../lib/fcm");
 
 module.exports = cors(async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -86,6 +87,16 @@ module.exports = cors(async function handler(req, res) {
         })
         .eq("worker_id", workerId);
     }
+
+    // Send push notification to the assigned worker
+    sendPushNotification(
+      workerId,
+      {
+        title: "New Report Assigned",
+        body: `You've been assigned a new ${priority}-priority report.`,
+      },
+      { type: "new_assignment", report_id: reportId }
+    );
 
     return res.json({ success: true });
   } catch (err) {
