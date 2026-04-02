@@ -32,7 +32,7 @@ import {
     SearchX,
 } from "lucide-react";
 import { toast } from "sonner";
-import { APIProvider, Map as GoogleMap, AdvancedMarker } from "@vis.gl/react-google-maps";
+import { APIProvider, Map as GoogleMap, AdvancedMarker, Pin } from "@vis.gl/react-google-maps";
 
 const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -751,8 +751,8 @@ export default function ReportsPage() {
                         <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleBulkStatus("in_progress")}>
                             Mark In Progress
                         </Button>
-                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleBulkStatus("resolved")}>
-                            Mark Resolved
+                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleBulkStatus("completed")}>
+                            Mark Completed
                         </Button>
                         <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleBulkStatus("closed")}>
                             Mark Closed
@@ -966,10 +966,10 @@ export default function ReportsPage() {
                                                 <DropdownMenuItem
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        handleUpdateStatus(report.id, "resolved");
+                                                        handleUpdateStatus(report.id, "completed");
                                                     }}
                                                 >
-                                                    Mark as Resolved
+                                                    Mark as Completed
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem
                                                     onClick={(e) => {
@@ -1044,12 +1044,12 @@ export default function ReportsPage() {
                 open={!!selectedReport}
                 onOpenChange={(open) => !open && setSelectedReport(null)}
             >
-                <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+                <DialogContent className="max-w-[90vw] w-full max-h-[95vh] overflow-y-auto">
                     {selectedReport && (
                         <>
                             <DialogHeader>
-                                <div className="flex items-center gap-3">
-                                    <span className="text-xs font-mono text-primary font-medium">
+                                <div className="flex items-center gap-3 flex-wrap">
+                                    <span className="text-sm font-mono text-primary font-semibold bg-primary/10 px-2.5 py-1 rounded-md">
                                         RPT-{selectedReport.report_number}
                                     </span>
                                     <Badge
@@ -1068,7 +1068,7 @@ export default function ReportsPage() {
                                         {getPriorityFromSeverity(selectedReport.ai_severity)} priority
                                     </Badge>
                                 </div>
-                                <DialogTitle className="text-lg mt-2">
+                                <DialogTitle className="text-xl font-semibold mt-3">
                                     {selectedReport.category?.name || selectedReport.ai_category_name || "Report"} — #{selectedReport.report_number}
                                 </DialogTitle>
                                 <DialogDescription className="sr-only">
@@ -1076,55 +1076,204 @@ export default function ReportsPage() {
                                 </DialogDescription>
                             </DialogHeader>
 
-                            <Tabs defaultValue="details" className="mt-2">
-                                <TabsList className="grid w-full grid-cols-4 h-9">
-                                    <TabsTrigger value="details" className="text-xs">
+                            {/* Quick Status Bar — always visible */}
+                            <div className="flex items-center gap-3 p-4 rounded-xl bg-muted/40 border border-border/60">
+                                <span className="text-xs font-medium text-muted-foreground shrink-0">Status:</span>
+                                <Select
+                                    value={detailStatus}
+                                    onValueChange={(v) => setDetailStatus(v)}
+                                    disabled={selectedReport.status === "closed"}
+                                >
+                                    <SelectTrigger className={`w-40 h-8 text-xs ${selectedReport.status === "closed" ? "opacity-50 cursor-not-allowed" : ""}`}>
+                                        <SelectValue placeholder="Update Status" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="pending">Pending</SelectItem>
+                                        <SelectItem value="open">Open</SelectItem>
+                                        <SelectItem value="assigned">Assigned</SelectItem>
+                                        <SelectItem value="in_progress">In Progress</SelectItem>
+                                        <SelectItem value="completed">Completed</SelectItem>
+                                        <SelectItem value="closed">Closed</SelectItem>
+                                        <SelectItem value="rejected">Rejected</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <Button
+                                    size="sm"
+                                    className="text-xs h-8"
+                                    disabled={selectedReport.status === "closed" || detailStatus === selectedReport.status}
+                                    onClick={handleSaveChanges}
+                                >
+                                    Save Status
+                                </Button>
+                                <Separator orientation="vertical" className="h-5" />
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className={`text-xs h-8 gap-1.5 ${selectedReport.status === "closed" ? "opacity-50 cursor-not-allowed" : ""}`}
+                                    disabled={selectedReport.status === "closed"}
+                                    onClick={() => setAssignDialog(selectedReport)}
+                                >
+                                    <UserPlus className="w-3.5 h-3.5" />
+                                    Assign Worker
+                                </Button>
+                                {selectedReport.status !== "closed" && selectedReport.status !== "rejected" && (
+                                    <Button
+                                        variant="destructive"
+                                        size="sm"
+                                        className="text-xs h-8 gap-1.5 ml-auto"
+                                        onClick={() => setRejectDialog(selectedReport)}
+                                    >
+                                        <XCircle className="w-3.5 h-3.5" />
+                                        Reject
+                                    </Button>
+                                )}
+                            </div>
+
+                            <Tabs defaultValue="images" className="mt-4">
+                                <TabsList className="grid w-full grid-cols-5 h-10">
+                                    <TabsTrigger value="images" className="text-sm">
+                                        Images
+                                    </TabsTrigger>
+                                    <TabsTrigger value="details" className="text-sm">
                                         Details
                                     </TabsTrigger>
-                                    <TabsTrigger value="ai" className="text-xs">
+                                    <TabsTrigger value="ai" className="text-sm">
                                         AI Analysis
                                     </TabsTrigger>
-                                    <TabsTrigger value="activity" className="text-xs">
+                                    <TabsTrigger value="activity" className="text-sm">
                                         Activity
                                     </TabsTrigger>
-                                    <TabsTrigger value="comments" className="text-xs">
+                                    <TabsTrigger value="comments" className="text-sm">
                                         Comments {comments.length > 0 && `(${comments.length})`}
                                     </TabsTrigger>
                                 </TabsList>
 
-                                <TabsContent value="details" className="space-y-4 mt-4">
-                                    {/* Report Image / Category Icon */}
-                                    <div className="w-full h-48 rounded-lg overflow-hidden bg-muted/30 border border-border/50">
-                                        {selectedReport.images && selectedReport.images.length > 0 ? (
-                                            <img
-                                                src={selectedReport.images[0].image_url}
-                                                alt={`Report #${selectedReport.report_number}`}
-                                                className="w-full h-full object-cover cursor-zoom-in hover:opacity-90 transition-opacity"
-                                                onClick={() => openLightbox(selectedReport.images![0].image_url)}
-                                            />
-                                        ) : (
-                                            <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
-                                                <span className="text-4xl">{getCategoryIcon(selectedReport.category?.name, selectedReport.category?.category_group)}</span>
-                                                <p className="text-xs">{selectedReport.category?.name || selectedReport.ai_category_name || "Uncategorized"}</p>
+                                {/* ── Images Tab ── side-by-side comparison ── */}
+                                <TabsContent value="images" className="space-y-6 mt-5">
+                                    {(() => {
+                                        // Filter out worker proof image from citizen images to avoid duplication
+                                        const proofUrl = selectedReport.assignment?.proof_image_url;
+                                        const citizenImages = (selectedReport.images || []).filter(
+                                            (img) => !proofUrl || img.image_url !== proofUrl
+                                        );
+                                        return (
+                                    <>
+                                    <div className="grid grid-cols-2 gap-8">
+                                        {/* Citizen Report Image */}
+                                        <div className="space-y-3">
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-2.5 h-2.5 rounded-full bg-destructive" />
+                                                <h4 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                                                    Before — Citizen Report
+                                                </h4>
                                             </div>
-                                        )}
+                                            <div className="h-96 rounded-xl overflow-hidden bg-muted/30 border-2 border-destructive/20 shadow-sm">
+                                                {citizenImages.length > 0 ? (
+                                                    <img
+                                                        src={citizenImages[0].image_url}
+                                                        alt="Citizen report"
+                                                        className="w-full h-full object-cover cursor-zoom-in hover:opacity-90 transition-opacity"
+                                                        onClick={() => openLightbox(citizenImages[0].image_url)}
+                                                    />
+                                                ) : (
+                                                    <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                                                        <ImageIcon className="w-8 h-8 opacity-40" />
+                                                        <p className="text-xs">No image uploaded by citizen</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {/* Additional citizen images */}
+                                            {citizenImages.length > 1 && (
+                                                <div className="flex gap-2 overflow-x-auto pb-1">
+                                                    {citizenImages.map((img, i) => (
+                                                        <img
+                                                            key={img.id}
+                                                            src={img.thumbnail_url || img.image_url}
+                                                            alt={`Report image ${i + 1}`}
+                                                            className="w-16 h-16 rounded-lg object-cover cursor-zoom-in border-2 border-border/50 hover:border-primary/50 transition-colors shrink-0"
+                                                            onClick={() => openLightbox(img.image_url)}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            )}
+                                            <p className="text-xs text-muted-foreground">
+                                                Uploaded {citizenImages[0]?.uploaded_at
+                                                    ? new Date(citizenImages[0].uploaded_at).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })
+                                                    : new Date(selectedReport.reported_at).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })
+                                                }
+                                            </p>
+                                        </div>
+
+                                        {/* Worker Proof Image */}
+                                        <div className="space-y-3">
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-2.5 h-2.5 rounded-full bg-success" />
+                                                <h4 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                                                    After — Worker Proof
+                                                </h4>
+                                                {selectedReport.assignment?.worker && (
+                                                    <span className="text-xs text-muted-foreground ml-auto">
+                                                        by {selectedReport.assignment.worker.full_name}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="h-96 rounded-xl overflow-hidden bg-muted/30 border-2 border-success/20 shadow-sm">
+                                                {selectedReport.assignment?.proof_image_url ? (
+                                                    <img
+                                                        src={selectedReport.assignment.proof_image_url}
+                                                        alt="Worker proof"
+                                                        className="w-full h-full object-cover cursor-zoom-in hover:opacity-90 transition-opacity"
+                                                        onClick={() => openLightbox(selectedReport.assignment!.proof_image_url!)}
+                                                    />
+                                                ) : (
+                                                    <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                                                        <ImageIcon className="w-8 h-8 opacity-40" />
+                                                        <p className="text-xs">No proof uploaded yet</p>
+                                                        {selectedReport.assignment?.worker ? (
+                                                            <p className="text-[10px] text-muted-foreground/70">Assigned to {selectedReport.assignment.worker.full_name}</p>
+                                                        ) : (
+                                                            <p className="text-[10px] text-muted-foreground/70">No worker assigned</p>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {selectedReport.assignment?.proof_image_url && selectedReport.assignment?.completed_at && (
+                                                <p className="text-xs text-muted-foreground">
+                                                    Completed {new Date(selectedReport.assignment.completed_at).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                                </p>
+                                            )}
+                                        </div>
                                     </div>
 
-                                    {/* Additional images */}
-                                    {selectedReport.images && selectedReport.images.length > 1 && (
-                                        <div className="flex gap-2 overflow-x-auto pb-1">
-                                            {selectedReport.images.map((img, i) => (
-                                                <img
-                                                    key={img.id}
-                                                    src={img.thumbnail_url || img.image_url}
-                                                    alt={`Report image ${i + 1}`}
-                                                    className="w-16 h-16 rounded-md object-cover cursor-zoom-in border border-border/50 hover:border-primary/50 transition-colors shrink-0"
-                                                    onClick={() => openLightbox(img.image_url)}
-                                                />
-                                            ))}
+                                    {/* Worker Note */}
+                                    {selectedReport.assignment?.worker_note && (
+                                        <div className="flex items-start gap-3 p-3.5 rounded-xl bg-muted/50 border border-border/50">
+                                            <MessageSquare className="w-4 h-4 text-muted-foreground mt-0.5" />
+                                            <div>
+                                                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Worker Note</p>
+                                                <p className="text-sm mt-1">{selectedReport.assignment.worker_note}</p>
+                                            </div>
                                         </div>
                                     )}
 
+                                    {/* Verdict hint for admin */}
+                                    {selectedReport.assignment?.proof_image_url && selectedReport.images && selectedReport.images.length > 0 && (
+                                        <div className="flex items-center gap-3 p-4 rounded-xl bg-primary/5 border border-primary/20">
+                                            <span className="text-xl">🔍</span>
+                                            <div>
+                                                <p className="text-sm font-medium">Review Comparison</p>
+                                                <p className="text-xs text-muted-foreground">
+                                                    Compare the before &amp; after images above, then update the status using the controls at the top.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    )}
+                                        </>
+                                        );
+                                    })()}
+                                </TabsContent>
+
+                                <TabsContent value="details" className="space-y-4 mt-4">
                                     {/* Description */}
                                     <div>
                                         <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
@@ -1139,20 +1288,18 @@ export default function ReportsPage() {
 
                                     {/* Mini Map */}
                                     {selectedReport.location?.latitude && selectedReport.location?.longitude && GOOGLE_MAPS_API_KEY && (
-                                        <div className="w-full h-36 rounded-lg overflow-hidden border border-border/50">
+                                        <div className="w-full h-72 rounded-lg overflow-hidden border border-border/50">
                                             <APIProvider apiKey={GOOGLE_MAPS_API_KEY}>
                                                 <GoogleMap
                                                     defaultCenter={{ lat: Number(selectedReport.location.latitude), lng: Number(selectedReport.location.longitude) }}
-                                                    defaultZoom={15}
-                                                    gestureHandling="none"
-                                                    disableDefaultUI
+                                                    defaultZoom={16}
+                                                    gestureHandling="cooperative"
+                                                    disableDefaultUI={false}
                                                     mapId="civicsight-detail-map"
                                                     style={{ width: "100%", height: "100%" }}
                                                 >
                                                     <AdvancedMarker position={{ lat: Number(selectedReport.location.latitude), lng: Number(selectedReport.location.longitude) }}>
-                                                        <div className="w-6 h-6 rounded-full bg-destructive border-2 border-white shadow-lg flex items-center justify-center">
-                                                            <MapPin className="w-3.5 h-3.5 text-white" />
-                                                        </div>
+                                                        <Pin background="#dc2626" borderColor="#991b1b" glyphColor="#ffffff" scale={1.2} />
                                                     </AdvancedMarker>
                                                 </GoogleMap>
                                             </APIProvider>
@@ -1246,49 +1393,6 @@ export default function ReportsPage() {
                                         </div>
                                     )}
 
-                                    {/* Proof Image Comparison */}
-                                    {selectedReport.assignment?.proof_image_url && (
-                                        <div className="space-y-2">
-                                            <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                                                Work Proof Comparison
-                                            </h4>
-                                            <div className="grid grid-cols-2 gap-3">
-                                                <div className="space-y-1.5">
-                                                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                                                        Before (Citizen Report)
-                                                    </p>
-                                                    <div className="h-40 rounded-lg overflow-hidden bg-muted/30 border border-border/50">
-                                                        {selectedReport.images?.[0] ? (
-                                                            <img
-                                                                src={selectedReport.images[0].image_url}
-                                                                alt="Citizen report"
-                                                                className="w-full h-full object-cover cursor-zoom-in hover:opacity-90 transition-opacity"
-                                                                onClick={() => openLightbox(selectedReport.images![0].image_url)}
-                                                            />
-                                                        ) : (
-                                                            <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                                                                <ImageIcon className="w-6 h-6" />
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                                <div className="space-y-1.5">
-                                                    <p className="text-[10px] font-medium uppercase tracking-wider text-success">
-                                                        After (Worker Proof)
-                                                    </p>
-                                                    <div className="h-40 rounded-lg overflow-hidden bg-success/5 border border-success/20">
-                                                        <img
-                                                            src={selectedReport.assignment.proof_image_url}
-                                                            alt="Worker proof"
-                                                            className="w-full h-full object-cover cursor-zoom-in hover:opacity-90 transition-opacity"
-                                                            onClick={() => openLightbox(selectedReport.assignment!.proof_image_url!)}
-                                                        />
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
-
                                     {/* Rejection info */}
                                     {selectedReport.status === "rejected" && (
                                         <div className="flex items-start gap-2 p-2.5 rounded-lg bg-destructive/5 border border-destructive/20">
@@ -1302,45 +1406,6 @@ export default function ReportsPage() {
                                         </div>
                                     )}
 
-                                    {/* Actions */}
-                                    <div className="flex items-center gap-2">
-                                        <Select
-                                            value={detailStatus}
-                                            onValueChange={(v) => setDetailStatus(v)}
-                                            disabled={selectedReport.status === "closed"}
-                                        >
-                                            <SelectTrigger className={`w-40 h-9 text-xs ${selectedReport.status === "closed" ? "opacity-50 cursor-not-allowed" : ""}`}>
-                                                <SelectValue placeholder="Update Status" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="pending">Pending</SelectItem>
-                                                <SelectItem value="in_progress">In Progress</SelectItem>
-                                                <SelectItem value="resolved">Resolved</SelectItem>
-                                                <SelectItem value="closed">Closed</SelectItem>
-                                                <SelectItem value="rejected">Rejected</SelectItem>
-                                            </SelectContent>
-                                        </Select>
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            className={`text-xs h-9 gap-1.5 ${selectedReport.status === "closed" ? "opacity-50 cursor-not-allowed" : ""}`}
-                                            disabled={selectedReport.status === "closed"}
-                                            onClick={() => {
-                                                setAssignDialog(selectedReport);
-                                            }}
-                                        >
-                                            <UserPlus className="w-3.5 h-3.5" />
-                                            Assign Worker
-                                        </Button>
-                                        <Button
-                                            size="sm"
-                                            className={`text-xs h-9 ml-auto ${selectedReport.status === "closed" ? "opacity-50 cursor-not-allowed" : ""}`}
-                                            disabled={selectedReport.status === "closed"}
-                                            onClick={handleSaveChanges}
-                                        >
-                                            Save Changes
-                                        </Button>
-                                    </div>
                                 </TabsContent>
 
                                 <TabsContent value="ai" className="space-y-4 mt-4">
