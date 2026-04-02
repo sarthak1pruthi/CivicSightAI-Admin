@@ -533,48 +533,52 @@ export default function ReportsPage() {
         setSelectedReport(null);
     };
 
-    // Export as PDF
+    const contentRef = useRef<HTMLDivElement>(null);
+
+    // Export as PDF (screen capture)
     const handleExport = async () => {
+        if (!contentRef.current) return;
+        const { toPng } = await import("html-to-image");
         const { default: jsPDF } = await import("jspdf");
-        const autoTable = (await import("jspdf-autotable")).default;
 
-        const doc = new jsPDF({ orientation: "landscape" });
-
-        // Title
-        doc.setFontSize(18);
-        doc.setTextColor(40, 40, 40);
-        doc.text("CivicSight AI - Reports", 14, 20);
-
-        // Subtitle
-        doc.setFontSize(10);
-        doc.setTextColor(120, 120, 120);
-        doc.text(`Generated on ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}  |  ${reports.length} total reports`, 14, 28);
-
-        // Table
-        const tableData = reports.map((r) => [
-            `RPT-${r.report_number}`,
-            r.description.length > 60 ? r.description.slice(0, 60) + "..." : r.description,
-            r.category?.name || "N/A",
-            getSeverityLabel(r.ai_severity),
-            r.status.replace("_", " "),
-            r.citizen?.full_name || "Unknown",
-            new Date(r.reported_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }),
-        ]);
-
-        autoTable(doc, {
-            startY: 34,
-            head: [["ID", "Description", "Category", "Severity", "Status", "Citizen", "Reported"]],
-            body: tableData,
-            styles: { fontSize: 8, cellPadding: 3 },
-            headStyles: { fillColor: [30, 30, 40], textColor: [255, 255, 255], fontStyle: "bold" },
-            alternateRowStyles: { fillColor: [245, 245, 250] },
-            columnStyles: {
-                0: { cellWidth: 25 },
-                1: { cellWidth: 80 },
-                4: { cellWidth: 25 },
-            },
+        const dataUrl = await toPng(contentRef.current, {
+            quality: 1,
+            pixelRatio: 2,
+            backgroundColor: "#ffffff",
         });
 
+        const img = new Image();
+        img.src = dataUrl;
+        await new Promise((resolve) => { img.onload = resolve; });
+
+        const doc = new jsPDF({ orientation: "landscape" });
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const margin = 10;
+        const usableWidth = pageWidth - 2 * margin;
+        const usableHeight = pageHeight - 2 * margin;
+        const ratio = usableWidth / img.width;
+        const scaledHeight = img.height * ratio;
+
+        if (scaledHeight <= usableHeight) {
+            doc.addImage(dataUrl, "PNG", margin, margin, usableWidth, scaledHeight);
+        } else {
+            const pageCanvasHeight = usableHeight / ratio;
+            let yOffset = 0;
+            let pageNum = 0;
+            while (yOffset < img.height) {
+                if (pageNum > 0) doc.addPage();
+                const sliceH = Math.min(pageCanvasHeight, img.height - yOffset);
+                const sliceCanvas = document.createElement("canvas");
+                sliceCanvas.width = img.width;
+                sliceCanvas.height = sliceH;
+                const ctx = sliceCanvas.getContext("2d");
+                ctx?.drawImage(img, 0, yOffset, img.width, sliceH, 0, 0, img.width, sliceH);
+                doc.addImage(sliceCanvas.toDataURL("image/png"), "PNG", margin, margin, usableWidth, sliceH * ratio);
+                yOffset += pageCanvasHeight;
+                pageNum++;
+            }
+        }
         doc.save(`civicsight-reports-${new Date().toISOString().slice(0, 10)}.pdf`);
     };
 
@@ -645,8 +649,7 @@ export default function ReportsPage() {
     }
 
     return (
-        <div className="space-y-6">
-            {/* Status filter tabs */}
+        <div ref={contentRef} className="space-y-6">
             <div className="flex items-center gap-2 overflow-x-auto pb-1">
                 {Object.entries(statusCounts).map(([status, count]) => (
                     <Button

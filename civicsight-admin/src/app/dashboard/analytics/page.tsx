@@ -1,15 +1,20 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
-import { Download, Loader2, AlertTriangle, Users, TrendingUp, Briefcase, Star, CheckCircle, XCircle, ClipboardList, Clock, BarChart3, Target, Zap, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { Download, Loader2, AlertTriangle, Users, TrendingUp, Briefcase, Star, CheckCircle, XCircle, ClipboardList, Clock, BarChart3, Target, Zap, ArrowUpRight, ArrowDownRight, ChevronDown, FileText, FileSpreadsheet } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
     LineChart, Line, PieChart, Pie, Cell, Sector,
-    RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
     AreaChart, Area,
 } from "recharts";
 import { fetchAnalyticsData, fetchCitizens, fetchWorkers } from "@/lib/queries";
@@ -184,8 +189,8 @@ export default function AnalyticsPage() {
         }));
     }, [reports]);
 
-    // Category radar — fixed to include completed/closed
-    const radarData = useMemo(() => {
+    // Category efficiency — completion rate per category
+    const categoryEfficiencyData = useMemo(() => {
         const catCounts: Record<string, { total: number; resolved: number }> = {};
         for (const r of reports) {
             const catName = r.category_id ? (catsMap.get(r.category_id) || "Other") : (r.ai_category_name || "Other");
@@ -196,11 +201,12 @@ export default function AnalyticsPage() {
         }
         return Object.entries(catCounts)
             .sort(([, a], [, b]) => b.total - a.total)
-            .slice(0, 6)
+            .slice(0, 8)
             .map(([category, v]) => ({
-                category: category.length > 14 ? category.slice(0, 14) + "…" : category,
-                score: v.total > 0 ? Math.round((v.resolved / v.total) * 100) : 0,
+                category,
                 total: v.total,
+                resolved: v.resolved,
+                rate: v.total > 0 ? Math.round((v.resolved / v.total) * 100) : 0,
             }));
     }, [reports, catsMap]);
 
@@ -424,18 +430,108 @@ export default function AnalyticsPage() {
         ].filter((d) => d.value > 0);
     }, [workers]);
 
-    const handleExport = () => {
-        const csv = [
-            "Date,Reports,Resolved",
-            ...volumeData.map((r) => `${r.month},${r.reports},${r.resolved}`),
-        ].join("\n");
-        const blob = new Blob([csv], { type: "text/csv" });
+    const downloadBlob = (content: string, filename: string, type: string) => {
+        const blob = new Blob([content], { type });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `civicsight-analytics-${selectedPeriod}-${new Date().toISOString().slice(0, 10)}.csv`;
+        a.download = filename;
         a.click();
         URL.revokeObjectURL(url);
+    };
+
+    const getExportCSVContent = (): { csv: string; filename: string } => {
+        const stamp = new Date().toISOString().slice(0, 10);
+        if (activeTab === "reports") {
+            const headers = ["ID", "Status", "Severity", "Category", "Reported At", "Resolved At", "Citizen ID"];
+            const rows = reports.map((r) => [
+                r.id,
+                r.status,
+                String(r.ai_severity ?? ""),
+                r.category_id ? (catsMap.get(r.category_id) || "") : (r.ai_category_name || ""),
+                new Date(r.reported_at).toLocaleDateString(),
+                getEndDate(r) ? new Date(getEndDate(r)!).toLocaleDateString() : "",
+                r.citizen_id || "",
+            ]);
+            return { csv: [headers, ...rows].map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n"), filename: `civicsight-reports-analytics-${selectedPeriod}-${stamp}.csv` };
+        } else if (activeTab === "citizens") {
+            const headers = ["Month", "New Citizens", "Total Citizens"];
+            const rows = citizenGrowthData.map((d) => [d.month, String(d.newCitizens), String(d.totalCitizens)]);
+            return { csv: [headers, ...rows].map((r) => r.join(",")).join("\n"), filename: `civicsight-citizen-growth-${stamp}.csv` };
+        } else {
+            const headers = ["Name", "Service Area", "Completed", "Rejected", "Rating", "Available"];
+            const rows = workers.map((w) => [
+                w.full_name || "Unknown",
+                w.worker_profile?.service_area || "Unassigned",
+                String(w.worker_profile?.total_completed || 0),
+                String(w.worker_profile?.total_rejected || 0),
+                String(w.worker_profile?.avg_rating?.toFixed(1) || "0"),
+                w.worker_profile?.is_available ? "Yes" : "No",
+            ]);
+            return { csv: [headers, ...rows].map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n"), filename: `civicsight-worker-performance-${stamp}.csv` };
+        }
+    };
+
+    const handleExportCSV = () => {
+        const { csv, filename } = getExportCSVContent();
+        downloadBlob(csv, filename, "text/csv");
+    };
+
+    const contentRef = useRef<HTMLDivElement>(null);
+
+    const handleExportPDF = async () => {
+        try {
+            if (!contentRef.current) {
+                console.error("PDF Export: contentRef is null");
+                return;
+            }
+            const { toPng } = await import("html-to-image");
+            const { default: jsPDF } = await import("jspdf");
+            const stamp = new Date().toISOString().slice(0, 10);
+
+            const dataUrl = await toPng(contentRef.current, {
+                quality: 1,
+                pixelRatio: 2,
+                backgroundColor: "#ffffff",
+            });
+
+            const img = new Image();
+            img.src = dataUrl;
+            await new Promise((resolve) => { img.onload = resolve; });
+
+            const doc = new jsPDF({ orientation: "landscape" });
+            const pageWidth = doc.internal.pageSize.getWidth();
+            const pageHeight = doc.internal.pageSize.getHeight();
+            const margin = 10;
+            const usableWidth = pageWidth - 2 * margin;
+            const usableHeight = pageHeight - 2 * margin;
+            const ratio = usableWidth / img.width;
+            const scaledHeight = img.height * ratio;
+
+            if (scaledHeight <= usableHeight) {
+                doc.addImage(dataUrl, "PNG", margin, margin, usableWidth, scaledHeight);
+            } else {
+                const pageCanvasHeight = usableHeight / ratio;
+                let yOffset = 0;
+                let pageNum = 0;
+                while (yOffset < img.height) {
+                    if (pageNum > 0) doc.addPage();
+                    const sliceH = Math.min(pageCanvasHeight, img.height - yOffset);
+                    const sliceCanvas = document.createElement("canvas");
+                    sliceCanvas.width = img.width;
+                    sliceCanvas.height = sliceH;
+                    const ctx = sliceCanvas.getContext("2d");
+                    ctx?.drawImage(img, 0, yOffset, img.width, sliceH, 0, 0, img.width, sliceH);
+                    doc.addImage(sliceCanvas.toDataURL("image/png"), "PNG", margin, margin, usableWidth, sliceH * ratio);
+                    yOffset += pageCanvasHeight;
+                    pageNum++;
+                }
+            }
+            doc.save(`civicsight-${activeTab}-analytics-${stamp}.pdf`);
+        } catch (err) {
+            console.error("PDF Export failed:", err);
+            alert("PDF export failed: " + (err instanceof Error ? err.message : String(err)));
+        }
     };
 
     if (loading) {
@@ -466,26 +562,37 @@ export default function AnalyticsPage() {
                         <TabsTrigger value="citizens" className="text-xs">Citizens</TabsTrigger>
                         <TabsTrigger value="workers" className="text-xs">Workers</TabsTrigger>
                     </TabsList>
-                    {activeTab === "reports" && (
-                        <div className="flex items-center gap-2">
-                            {(["7D", "30D", "90D", "All"] as PeriodKey[]).map((period) => (
-                                <Button
-                                    key={period}
-                                    variant={period === selectedPeriod ? "default" : "ghost"}
-                                    size="sm"
-                                    className="text-xs h-8 px-3"
-                                    onClick={() => setSelectedPeriod(period)}
-                                >
-                                    {period}
-                                </Button>
-                            ))}
-                            <Button variant="outline" size="sm" className="text-xs h-8 gap-1.5" onClick={handleExport}>
-                                <Download className="w-3.5 h-3.5" /> Export
+                    <div className="flex items-center gap-2">
+                        {activeTab === "reports" && (["7D", "30D", "90D", "All"] as PeriodKey[]).map((period) => (
+                            <Button
+                                key={period}
+                                variant={period === selectedPeriod ? "default" : "ghost"}
+                                size="sm"
+                                className="text-xs h-8 px-3"
+                                onClick={() => setSelectedPeriod(period)}
+                            >
+                                {period}
                             </Button>
-                        </div>
-                    )}
+                        ))}
+                        <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                                <Button variant="outline" size="sm" className="text-xs h-8 gap-1.5">
+                                    <Download className="w-3.5 h-3.5" /> Export <ChevronDown className="w-3 h-3" />
+                                </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={handleExportPDF}>
+                                    <FileText className="w-3.5 h-3.5 mr-2" /> Export as PDF
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={handleExportCSV}>
+                                    <FileSpreadsheet className="w-3.5 h-3.5 mr-2" /> Export as CSV
+                                </DropdownMenuItem>
+                            </DropdownMenuContent>
+                        </DropdownMenu>
+                    </div>
                 </div>
 
+                <div ref={contentRef}>
                 {/* ─── REPORTS TAB ─── */}
                 <TabsContent value="reports" className="mt-4 space-y-4">
 
@@ -666,20 +773,28 @@ export default function AnalyticsPage() {
                 <Card className="border-border/50">
                     <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-semibold">Resolution Efficiency</CardTitle>
-                        <p className="text-xs text-muted-foreground">Completion rate by category (%)</p>
+                        <p className="text-xs text-muted-foreground">Completion rate by category</p>
                     </CardHeader>
                     <CardContent>
-                        {radarData.length > 0 ? (
-                        <div className="h-70">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="70%">
-                                    <PolarGrid stroke="rgba(128,128,128,0.15)" />
-                                    <PolarAngleAxis dataKey="category" fontSize={10} stroke="rgba(128,128,128,0.5)" />
-                                    <PolarRadiusAxis fontSize={9} stroke="rgba(128,128,128,0.3)" domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
-                                    <Radar name="Completion %" dataKey="score" stroke="#e88c30" fill="#e88c30" fillOpacity={0.25} strokeWidth={2} />
-                                    <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} formatter={(v: number | undefined) => [`${v ?? 0}%`, "Completion Rate"]} />
-                                </RadarChart>
-                            </ResponsiveContainer>
+                        {categoryEfficiencyData.length > 0 ? (
+                        <div className="space-y-3 mt-1">
+                            {categoryEfficiencyData.map((cat) => (
+                                <div key={cat.category} className="space-y-1">
+                                    <div className="flex items-center justify-between text-xs">
+                                        <span className="font-medium truncate max-w-[60%]">{cat.category}</span>
+                                        <span className="text-muted-foreground shrink-0 ml-2">{cat.rate}% · {cat.resolved}/{cat.total}</span>
+                                    </div>
+                                    <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
+                                        <div
+                                            className="h-full rounded-full transition-all duration-500"
+                                            style={{
+                                                width: `${cat.rate}%`,
+                                                background: cat.rate >= 60 ? "#22c55e" : cat.rate >= 30 ? "#f59e0b" : "#ef4444",
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                         ) : (
                             <div className="h-70 flex items-center justify-center text-muted-foreground text-xs">No category data available</div>
@@ -1177,6 +1292,7 @@ export default function AnalyticsPage() {
                         </CardContent>
                     </Card>
                 </TabsContent>
+                </div>
             </Tabs>
         </div>
     );
