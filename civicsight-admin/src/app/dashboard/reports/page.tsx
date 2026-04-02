@@ -751,8 +751,8 @@ export default function ReportsPage() {
                         <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleBulkStatus("in_progress")}>
                             Mark In Progress
                         </Button>
-                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleBulkStatus("resolved")}>
-                            Mark Resolved
+                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleBulkStatus("completed")}>
+                            Mark Completed
                         </Button>
                         <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => handleBulkStatus("closed")}>
                             Mark Closed
@@ -966,10 +966,10 @@ export default function ReportsPage() {
                                                 <DropdownMenuItem
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        handleUpdateStatus(report.id, "resolved");
+                                                        handleUpdateStatus(report.id, "completed");
                                                     }}
                                                 >
-                                                    Mark as Resolved
+                                                    Mark as Completed
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem
                                                     onClick={(e) => {
@@ -1092,7 +1092,6 @@ export default function ReportsPage() {
                                         <SelectItem value="open">Open</SelectItem>
                                         <SelectItem value="assigned">Assigned</SelectItem>
                                         <SelectItem value="in_progress">In Progress</SelectItem>
-                                        <SelectItem value="resolved">Resolved</SelectItem>
                                         <SelectItem value="completed">Completed</SelectItem>
                                         <SelectItem value="closed">Closed</SelectItem>
                                         <SelectItem value="rejected">Rejected</SelectItem>
@@ -1151,6 +1150,14 @@ export default function ReportsPage() {
 
                                 {/* ── Images Tab ── side-by-side comparison ── */}
                                 <TabsContent value="images" className="space-y-6 mt-5">
+                                    {(() => {
+                                        // Filter out worker proof image from citizen images to avoid duplication
+                                        const proofUrl = selectedReport.assignment?.proof_image_url;
+                                        const citizenImages = (selectedReport.images || []).filter(
+                                            (img) => !proofUrl || img.image_url !== proofUrl
+                                        );
+                                        return (
+                                    <>
                                     <div className="grid grid-cols-2 gap-8">
                                         {/* Citizen Report Image */}
                                         <div className="space-y-3">
@@ -1161,12 +1168,12 @@ export default function ReportsPage() {
                                                 </h4>
                                             </div>
                                             <div className="h-96 rounded-xl overflow-hidden bg-muted/30 border-2 border-destructive/20 shadow-sm">
-                                                {selectedReport.images && selectedReport.images.length > 0 ? (
+                                                {citizenImages.length > 0 ? (
                                                     <img
-                                                        src={selectedReport.images[0].image_url}
+                                                        src={citizenImages[0].image_url}
                                                         alt="Citizen report"
                                                         className="w-full h-full object-cover cursor-zoom-in hover:opacity-90 transition-opacity"
-                                                        onClick={() => openLightbox(selectedReport.images![0].image_url)}
+                                                        onClick={() => openLightbox(citizenImages[0].image_url)}
                                                     />
                                                 ) : (
                                                     <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
@@ -1176,9 +1183,9 @@ export default function ReportsPage() {
                                                 )}
                                             </div>
                                             {/* Additional citizen images */}
-                                            {selectedReport.images && selectedReport.images.length > 1 && (
+                                            {citizenImages.length > 1 && (
                                                 <div className="flex gap-2 overflow-x-auto pb-1">
-                                                    {selectedReport.images.map((img, i) => (
+                                                    {citizenImages.map((img, i) => (
                                                         <img
                                                             key={img.id}
                                                             src={img.thumbnail_url || img.image_url}
@@ -1190,8 +1197,8 @@ export default function ReportsPage() {
                                                 </div>
                                             )}
                                             <p className="text-xs text-muted-foreground">
-                                                Uploaded {selectedReport.images?.[0]?.uploaded_at
-                                                    ? new Date(selectedReport.images[0].uploaded_at).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })
+                                                Uploaded {citizenImages[0]?.uploaded_at
+                                                    ? new Date(citizenImages[0].uploaded_at).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })
                                                     : new Date(selectedReport.reported_at).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })
                                                 }
                                             </p>
@@ -1261,6 +1268,9 @@ export default function ReportsPage() {
                                             </div>
                                         </div>
                                     )}
+                                        </>
+                                        );
+                                    })()}
                                 </TabsContent>
 
                                 <TabsContent value="details" className="space-y-4 mt-4">
